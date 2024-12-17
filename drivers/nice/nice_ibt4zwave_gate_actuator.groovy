@@ -4,22 +4,23 @@
  *	Author: Bogusław Wójcik
  *
  *	CHANGELOG:
- *  - V0.1.0: Initial working version.
+ *  - V0.1.1 - 17.12.2024: Improved fingerprint and added state update based on supervision report to improve speed and reliability.
+ *  - V0.1.0 - 12.12.2024: Initial working version.
  *
  *  DESCRIPTION:
- *  This is a custom driver for Nice IBT4ZWAVE module pluggable into Nice gate and garage door controllers.
- *  To control the gate the module utilizes multi-level switch command class and can be used with inbuilt
- *  Generic Z-Wave Plus Dimmer driver. Unfortunately, while providing basic functionality, it does not allow
- *  the user to see the current state of the gate properly nor export the device properly as a gate to HomeKit.
- *  This driver exposes the device as a garage door and internally maps its multi-level switch values to one of
- *  the following states: open, closed, opening, closing, stopped, unknown.
+ *  This is a custom driver for Nice IBT4ZWAVE module pluggable into Nice gate and garage door controllers. To control
+ *  the gate the module exposes a multi-level switch command class and can be used with an inbuilt Generic Z-Wave Plus
+ *  Dimmer driver - which can prove basic functionality but does not allow the user to see the current state of the
+ *  gate properly nor export the device properly as a gate to HomeKit. On the other hand, this driver exposes the
+ *  device as a garage door and internally maps its multi-level switch values to one of the following states: open,
+ *  closed, opening, closing, stopped, unknown.
  *
  *  NOTES:
- *  - The driver exposes "stopped" state which can occur if gate or garage doors hit an obstacle or are stopped by a pilot.
- *    This state is not listed as supported by Hubitat Garage Door Control capability and the user can disable this behavior in preferences.
- *  - The driver has been tested on Nice IBT4ZWAVE from EU distribution module with firmware version 7.0 and securely paired.
- *  - The driver incorporates contact sensor capability only to allow the user to export the device to HomeKit as a garage door.
- *    This might be an error of the HomeKit integration and might be removed in the future.
+ *  - The driver exposes a "stopped" state which can occur if gate or garage doors hit an obstacle or are stopped by a pilot.
+ *  - This state is not listed as supported by Hubitat Garage Door Control capability and the user can disable this behavior in preferences.
+ *  - The driver has been tested on Nice IBT4ZWAVE from EU distribution module with firmware version 7.0 and securely paired with Hubitat.
+ *  - The driver incorporates also a contact sensor capability only to allow the user to export the device to HomeKit as a garage door.
+ *    The requirement to have a contact capability might be an error of the HomeKit integration and may be removed in the future.
  *
  *  Copyright 2024 Bogusław Wójcik
  *
@@ -36,7 +37,7 @@
 
 import groovy.transform.Field
 
-@Field String VERSION = "0.1.0"
+@Field String VERSION = "0.1.1"
 
 metadata {
   definition (name: "Nice IBT4ZWAVE", namespace: "boguslaw-wojcik", author: "Bogusław Wójcik", importUrl: "https://github.com/boguslaw-wojcik/hubitat/blob/main/drivers/nice/nice_ibt4zwave_gate_actuator.groovy") {
@@ -47,8 +48,7 @@ metadata {
     capability "Refresh"
     capability "Configuration"
 
-    fingerprint mfr: "1089", deviceId: "4096", inClusters: "0x5E, 0x98, 0x9F, 0x6C, 0x55, 0x22", secureInClusters: "0x26, 0x85, 0x8E, 0x59, 0x5A, 0x7A, 0x87, 0x72, 0x73, 0x86, 0x71, 0x75, 0x70", deviceJoinName: "Nice IBT4ZWAVE"
-    fingerprint mfr: "1089", deviceId: "4096", inClusters: "0x5E, 0x98, 0x9F, 0x6C, 0x55, 0x22, 0x26, 0x85, 0x8E, 0x59, 0x5A, 0x7A, 0x87, 0x72, 0x73, 0x86, 0x71, 0x75, 0x70", deviceJoinName: "Nice IBT4ZWAVE"
+    fingerprint mfr:"1089", prod:"9216", deviceId:"4096", inClusters:"0x00,0x00", controllerType: "ZWV", deviceJoinName: "Nice IBT4ZWAVE"
   }
 
   preferences {
@@ -123,6 +123,12 @@ String getContactState(Short value, Short targetValue) {
    }
 }
 
+// This is a helper function to report the state of the barrier and contact sensor.
+void reportState(String barrierState, String contactState) {
+  sendEventWrapper(name:"door", value: barrierState, descriptionText:"Barrier is ${barrierState}")
+  sendEventWrapper(name:"contact", value: contactState, descriptionText:"Contact is ${contactState}")
+}
+
 void installed() {
   log.info "installed(${VERSION})"
   sendEvent(name: "door", value: "unknown")
@@ -161,22 +167,16 @@ void configure() {
 
 void open() {
   logger("debug", "open()")
-  // We are sending a get multilevel command right after a command to open the gate in order to force the device to report the temporary state.
-  // Normally, the device will not report on its own opening or closing state if the action has been initiated by the Z-Wave controller.
   List<hubitat.zwave.Command> cmds=[
-    supervisionEncap(zwave.switchMultilevelV4.switchMultilevelSet(value: 0xFF, dimmingDuration: 0x00)),
-    secureCmd(zwave.switchMultilevelV4.switchMultilevelGet())
+    supervisionEncap(zwave.switchMultilevelV4.switchMultilevelSet(value: 0x63, dimmingDuration: 0x00))
   ]
   sendCommands(cmds, 200)
 }
 
 void close() {
   logger("debug", "close()")
-  // We are sending a get multilevel command right after a command to open the gate in order to force the device to report the temporary state.
-  // Normally, the device will not report on its own opening or closing state if the action has been initiated by the Z-Wave controller.
   List<hubitat.zwave.Command> cmds=[
-    supervisionEncap(zwave.switchMultilevelV4.switchMultilevelSet(value: 0x00, dimmingDuration: 0x00)),
-    secureCmd(zwave.switchMultilevelV4.switchMultilevelGet())
+    supervisionEncap(zwave.switchMultilevelV4.switchMultilevelSet(value: 0x00, dimmingDuration: 0x00))
   ]
   sendCommands(cmds, 200)
 }
@@ -188,15 +188,14 @@ void parse(String description) {
     logger("debug", "parse() - parsed to cmd: ${cmd?.inspect()} with result: ${result?.inspect()}")
     zwaveEvent(cmd)
   } else {
-    logger("error", "parse() - nonn-parsed - description: ${description?.inspect()}")
+    logger("error", "parse() - non-parsed - description: ${description?.inspect()}")
   }
 }
 
 void zwaveEvent(hubitat.zwave.commands.switchmultilevelv4.SwitchMultilevelReport cmd){
   logger("trace", "zwaveEvent(SwitchMultilevelReport) - cmd: ${cmd.inspect()}")
 
-  sendEventWrapper(name:"door", value: getBarrierState(cmd.value, cmd.targetValue), descriptionText:"Barrier is ${getBarrierState(cmd.value, cmd.targetValue)}")
-  sendEventWrapper(name:"contact", value: getContactState(cmd.value, cmd.targetValue), descriptionText:"Contact is ${getBarrierState(cmd.value, cmd.targetValue)}")
+  reportState(getBarrierState(cmd.value, cmd.targetValue), getContactState(cmd.value, cmd.targetValue))
 }
 
 void zwaveEvent(hubitat.zwave.commands.manufacturerspecificv2.ManufacturerSpecificReport cmd) {
@@ -246,6 +245,29 @@ private void sendEventWrapper(Map prop) {
       logger("debug", "${prop.descriptionText}")
     }
   }
+}
+
+void handleSupervisedCommand(hubitat.zwave.Command cmd, supervisionStatus) {
+    logger("warn", "handleSupervisedCommand(Command) - Unspecified - cmd: ${cmd.inspect()}, status: ${supervisionStatus}")
+}
+
+void handleSupervisedCommand(hubitat.zwave.commands.switchmultilevelv4.SwitchMultilevelSet cmd, supervisionStatus) {
+    logger("trace", "handleSupervisedCommand(SwitchMultilevelSet) - cmd: ${cmd.inspect()}, status: ${supervisionStatus}")
+
+    switch (supervisionStatus) {
+      case 0x01: // "Working"
+        // If the device responded with a working status upon receiving a command to open or close the gate,
+        // we can assume the command was accepted and is undergoing, so we can report the state as opening or closing.
+        // There is no need to request a report from the device.
+        reportState(getBarrierState((Short) 0xFE, cmd.value), getContactState((Short) 0xFE, cmd.value))
+        break
+      case 0xFF: // "Success"
+        // If the device responded with a success status upon receiving a command to open or close the gate,
+        // we can assume that the gate was open or closed already.
+        // There is no need to request a report from the device.
+        reportState(getBarrierState(cmd.value, cmd.value), getContactState(cmd.value, cmd.value))
+        break
+    }
 }
 
 // The code below with minimal changes is largely based on ZooZ custom drivers developed by Jeff Page.
@@ -323,17 +345,19 @@ void zwaveEvent(hubitat.zwave.commands.supervisionv1.SupervisionReport cmd) {
   logger("trace", "zwaveEvent(SupervisionReport) - cmd: ${cmd.inspect()}")
   if (!supervisedPackets."${device.id}") { supervisedPackets."${device.id}" = [:] }
   switch (cmd.status as Integer) {
-    case 0x01: // "Working"
-      // When receiving a command to open or close the gate or garage door Nice IBT4ZWAVE will always respond with "Working" status if everything is ok.
-      // This is obviously because it takes usually 10-60 seconds to open or close the gate or garage door based on the motor speed.
-      if (supervisedPackets["${device.id}"][cmd.sessionID] != null) { supervisedPackets["${device.id}"].remove(cmd.sessionID) }
-      break
     case 0x00: // "No Support"
     case 0x02: // "Failed"
       logger("warn", "Supervision NOT Successful - SessionID: ${cmd.sessionID}, Status: ${cmd.status}")
       break
+    case 0x01: // "Working"
     case 0xFF: // "Success"
-      if (supervisedPackets["${device.id}"][cmd.sessionID] != null) { supervisedPackets["${device.id}"].remove(cmd.sessionID) }
+      if (supervisedPackets["${device.id}"][cmd.sessionID] != null) {
+        supervisedCmd = supervisedPackets["${device.id}"][cmd.sessionID].encapsulatedCommand(CMD_CLASS_VERS)
+
+        handleSupervisedCommand(supervisedCmd, cmd.status)
+
+        supervisedPackets["${device.id}"].remove(cmd.sessionID)
+      }
       break
   }
 }
