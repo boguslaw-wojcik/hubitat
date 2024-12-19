@@ -4,6 +4,7 @@
  *	Author: Bogusław Wójcik
  *
  *	CHANGELOG:
+ *  - v0.1.2 - 19.12.2024: Bring back the explicit request for the state update after command for non-securely included devices.
  *  - V0.1.1 - 17.12.2024: Improved fingerprint and added state update based on supervision report to improve speed and reliability.
  *  - V0.1.0 - 12.12.2024: Initial working version.
  *
@@ -170,6 +171,12 @@ void open() {
   List<hubitat.zwave.Command> cmds=[
     supervisionEncap(zwave.switchMultilevelV4.switchMultilevelSet(value: 0x63, dimmingDuration: 0x00))
   ]
+
+  // If the device does not support S2 security, request the state to be updated.
+  if (getDataValue("S2")?.toInteger()==null) {
+    cmds.add(secureCmd(zwave.switchMultilevelV4.switchMultilevelGet()))
+  }
+
   sendCommands(cmds, 200)
 }
 
@@ -178,6 +185,12 @@ void close() {
   List<hubitat.zwave.Command> cmds=[
     supervisionEncap(zwave.switchMultilevelV4.switchMultilevelSet(value: 0x00, dimmingDuration: 0x00))
   ]
+
+  // If the device does not support S2 security, request the state to be updated.
+  if (getDataValue("S2")?.toInteger()==null) {
+    cmds.add(secureCmd(zwave.switchMultilevelV4.switchMultilevelGet()))
+  }
+
   sendCommands(cmds, 200)
 }
 
