@@ -7,17 +7,18 @@
  *  - V0.1.0 - 03.05.2025: Initial working version.
  *
  *  DESCRIPTION:
- *  This is a custom driver for Shelly Wave Shutter intended to be used instead of the Hubitat in-built drivers.
- *  As of the time of writing the in-built driver suffers from multiple issues encountered on S2 included devices from EU distribution.
+ *  This is a custom driver for Shelly Wave Shutter that is intended to be used instead of the Hubitat in-built drivers.
+ *  As of the time of writing, the in-built driver suffers from multiple issues encountered on S2-included devices from EU distribution.
  *
  *  This custom driver fixes following issues:
- *  - shows properly "opening", "closing", "partially open", "open" and "closed" states,
+ *  - shows properly "opening", "closing", "partially open", "open", and "closed" states,
  *  - calibration button works correctly,
- *  - all parameters defined in manual are configurable and configuration is properly saved on the device.
+ *  - all parameters defined in the manual are configurable, and the configuration is properly saved on the device.
  *
  *  Additionally:
- *  - the driver properly leverages S2 supervision and infers "closing" and "opening" states from acknowledged commands thus reducing radio traffic,
- *  - upon hitting "refresh" action shows the calibration status.
+ *  - the driver properly leverages S2 supervision and infers "closing" and "opening" states from acknowledged commands, thus reducing radio traffic,
+ *  - upon hitting the "refresh" action shows the current calibration status,
+ *  - lifetime energy consumption is shown.
  *
  *  NOTES:
  *  - The driver has been tested on Shelly Wave Shutter from EU distribution module with firmware version 12.23 and securely paired with Hubitat.
@@ -427,7 +428,7 @@ void zwaveEvent(hubitat.zwave.commands.switchmultilevelv4.SwitchMultilevelReport
         position = 99
     }
 
-    sendEventWrapper(name: "position", value: position, unit: "%", descriptionText: "Position is ${position}%")
+    sendEventWrapper(name: "position", value: position, unit: "%", descriptionText: "Shade position is ${position} %")
 
     updateWindowShade(cmd.value, cmd.targetValue)
 }
@@ -436,10 +437,10 @@ void zwaveEvent(hubitat.zwave.commands.meterv6.MeterReport cmd, ep = 0) {
     logTrace "${cmd}"
     switch (cmd.scale) {
         case 0x00:
-            sendEventWrapper(name: "energy", value: cmd.scaledMeterValue, unit: "kWh", descriptionText: "consumed ${cmd.scaledMeterValue} kWh")
+            sendEventWrapper(name: "energy", value: cmd.scaledMeterValue, unit: "kWh", descriptionText: "Device consumed ${cmd.scaledMeterValue} kWh")
             break;
         case 0x02:
-            sendEventWrapper(name: "power", value: cmd.scaledMeterValue, unit: "W", descriptionText: "consumes ${cmd.scaledMeterValue} W")
+            sendEventWrapper(name: "power", value: cmd.scaledMeterValue, unit: "W", descriptionText: "Device consumes ${cmd.scaledMeterValue} W")
             break;
         default:
             logWarn("Skipped Z-Wave MeterReport: ${cmd.inspect()}")
