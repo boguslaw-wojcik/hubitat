@@ -1,0 +1,19 @@
+{
+  "packageName": "Shelly Wave Shutter",
+  "author": "Bogusław Wójcik (@bogus.wojcik)",
+  "minimumHEVersion": "2.3.5",
+  "dateReleased": "2025-05-03",
+  "documentationLink": "https://community.hubitat.com/t/release-shelly-wave-shutter-community-driver/153207",
+  "communityLink": "https://community.hubitat.com/t/release-shelly-wave-shutter-community-driver/153207",
+  "releaseNotes": "- v0.1.0 - 03.05.2025: Initial working version.",
+  "version": "0.1.0",
+  "drivers": [
+    {
+      "id": "1291da97-d907-4808-bb35-8b60d14a47a6",
+      "name": "Shelly Wave Shutter",
+      "namespace": "boguslaw-wojcik",
+      "location": "https://raw.githubusercontent.com/boguslaw-wojcik/hubitat/main/drivers/shelly/shelly_wave_shutter_blinds_controller.groovy",
+      "required": true
+    }
+  ]
+}

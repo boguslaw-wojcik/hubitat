@@ -4,7 +4,7 @@
  *	Author: Bogusław Wójcik
  *
  *	CHANGELOG:
- *  - V0.1.0 - 03.05.2025: Initial working version.
+ *  - v0.1.0 - 03.05.2025: Initial working version.
  *
  *  DESCRIPTION:
  *  This is a custom driver for Shelly Wave Shutter that is intended to be used instead of the Hubitat in-built drivers.

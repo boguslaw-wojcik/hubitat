@@ -5,8 +5,8 @@
  *
  *	CHANGELOG:
  *  - v0.1.2 - 19.12.2024: Bring back the explicit request for the state update after command for non-securely included devices.
- *  - V0.1.1 - 17.12.2024: Improved fingerprint and added state update based on supervision report to improve speed and reliability.
- *  - V0.1.0 - 12.12.2024: Initial working version.
+ *  - v0.1.1 - 17.12.2024: Improved fingerprint and added state update based on supervision report to improve speed and reliability.
+ *  - v0.1.0 - 12.12.2024: Initial working version.
  *
  *  DESCRIPTION:
  *  This is a custom driver for Nice IBT4ZWAVE module pluggable into Nice gate and garage door controllers. To control

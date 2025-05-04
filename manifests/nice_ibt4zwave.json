@@ -1,0 +1,20 @@
+{
+  "packageName": "Nice IBT4ZWAVE",
+  "author": "Bogusław Wójcik (@bogus.wojcik)",
+  "minimumHEVersion": "2.3.5",
+  "dateReleased": "2024-12-19",
+  "documentationLink": "https://community.hubitat.com/t/release-nice-ibt4zwave-community-driver/146932",
+  "communityLink": "https://community.hubitat.com/t/release-nice-ibt4zwave-community-driver/146932",
+  "releaseNotes": "- v0.1.2 - 19.12.2024: Bring back the explicit request for the state update after command for non-securely included devices.\n- v0.1.1 - 17.12.2024: Improved fingerprint and added state update based on supervision report to improve speed and reliability.\n- v0.1.0 - 12.12.2024: Initial working version.",
+  "version": "0.1.2",
+  "drivers": [
+    {
+      "id": "9a426728-a28c-48b7-8408-8ac14423696c",
+      "name": "Nice IBT4ZWAVE",
+      "namespace": "boguslaw-wojcik",
+      "location": "https://raw.githubusercontent.com/boguslaw-wojcik/hubitat/main/drivers/nice/nice_ibt4zwave_gate_actuator.groovy",
+      "required": true
+    }
+  ]
+}
+

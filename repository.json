@@ -1,0 +1,31 @@
+{
+  "author": "Bogusław Wójcik (@bogus.wojcik)",
+  "gitHubUrl": "https://github.com/boguslaw-wojcik/hubitat",
+  "payPalUrl": "",
+  "packages": [
+    {
+      "id": "349ceb4b-29d2-41f4-a496-839a76f83823",
+      "name": "Nice IBT4ZWAVE",
+      "category": "Control",
+      "location": "https://raw.githubusercontent.com/boguslaw-wojcik/hubitat/main/manifests/nice_ibt4zwave.json",
+      "description": "Nice IBT4ZWAVE gate/garage door actuator driver.",
+      "descriptive": "",
+      "tags": [
+        "Garage Doors",
+        "ZWave"
+      ]
+    },
+    {
+      "id": "61d61805-7161-4d56-9d5f-375e119f9def",
+      "name": "Shelly Wave Shutter",
+      "category": "Control",
+      "location": "https://raw.githubusercontent.com/boguslaw-wojcik/hubitat/main/manifests/shelly_wave_shutter.json",
+      "description": "Shelly Wave Shutter blinds controller driver with all parameters, calibration support and proper handling of states.",
+      "descriptive": "",
+      "tags": [
+        "Doors & Windows",
+        "ZWave"
+      ]
+    }
+  ]
+}
