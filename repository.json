@@ -26,6 +26,20 @@
         "Doors & Windows",
         "ZWave"
       ]
+    },
+    {
+      "id": "23079191-661c-49e7-b304-53269c7cbbc7",
+      "name": "Aeotec TriSensor 8",
+      "category": "Security",
+      "location": "https://raw.githubusercontent.com/boguslaw-wojcik/hubitat/main/manifests/aeotec_trisensor_8.json",
+      "description": "Aeotec TriSensor 8 multi-sensor driver with parameters and S2 support.",
+      "descriptive": "",
+      "tags": [
+        "Motion Control",
+        "Safety & Security",
+        "Temperature & Humidity",
+        "ZWave"
+      ]
     }
   ]
 }

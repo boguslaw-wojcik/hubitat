@@ -1,28 +1,21 @@
 /**
- *  Shelly Wave Shutter Z-Wave 800 Driver for Hubitat
- *  Date: 03.05.2025
- *	Author: Bogusław Wójcik
+ *  Aeotec TriSensor 8 Z-Wave 800 Driver for Hubitat
+ *  Date: 19.06.2025
+ * 	Author: Bogusław Wójcik
  *
- *	CHANGELOG:
- *  - v0.1.1 - 19.06.2025: Minor fix when reading enumerated configuration params.
- *  - v0.1.0 - 03.05.2025: Initial working version.
+ * 	CHANGELOG:
+ *  - v0.1.0 - 19.06.2025: Initial working version.
  *
  *  DESCRIPTION:
- *  This is a custom driver for Shelly Wave Shutter that is intended to be used instead of the Hubitat in-built drivers.
- *  As of the time of writing, the in-built driver suffers from multiple issues encountered on S2-included devices from EU distribution.
- *
- *  This custom driver fixes following issues:
- *  - shows properly "opening", "closing", "partially open", "open", and "closed" states,
- *  - calibration button works correctly,
- *  - all parameters defined in the manual are configurable, and the configuration is properly saved on the device.
- *
- *  Additionally:
- *  - the driver properly leverages S2 supervision and infers "closing" and "opening" states from acknowledged commands, thus reducing radio traffic,
- *  - upon hitting the "refresh" action shows the current calibration status,
- *  - lifetime energy consumption is shown.
+ *  This is a custom driver for Aeotec TriSensor 8 that is intended to be used instead of the driver available on Aeotec support pages.
+ *  This custom driver improves following aspects:
+ *  - S2 included sensor is fully supported,
+ *  - most parameters defined in the manual are configurable, including new parameters added in 2.8.4 firmware update.
  *
  *  NOTES:
- *  - The driver has been tested on Shelly Wave Shutter from EU distribution module with firmware version 12.23 and securely paired with Hubitat.
+ *  - The driver has been tested on Aeotec TriSensor 8 from EU distribution with firmware version 2.8.4 (shows as 2.0.8) and securely paired with Hubitat.
+ *  - To take full advantage of parameters configuring LED behavior make sure you update the firmware of the sensor.
+ *    Firmware can be downloaded at: https://aeotec.freshdesk.com/support/solutions/articles/6000276825-update-trisensor-8-to-v2-8-4
  *
  *  Copyright 2025 Bogusław Wójcik
  *
@@ -38,27 +31,37 @@
  */
 
 import groovy.transform.Field
+import groovy.time.TimeCategory
 
-@Field static final String VERSION = "0.1.1"
+@Field static final String VERSION = "0.1.0"
 
 metadata {
     definition(
-            name: "Shelly Wave Shutter",
+            name: "Aeotec TriSensor 8",
             namespace: "boguslaw-wojcik",
             author: "Bogusław Wójcik",
             singleThreaded: true,
-            importUrl: "https://github.com/boguslaw-wojcik/hubitat/blob/main/drivers/shelly/shelly_wave_shutter_blinds_controller.groovy"
+            importUrl: "https://github.com/boguslaw-wojcik/hubitat/blob/main/drivers/shelly/trisensor8_multisensor.groovy"
     ) {
         capability "Actuator"
-        capability "Configuration"
+        capability "Battery"
+        capability "Power Source"
+        capability "Sensor"
+        capability "Motion Sensor"
+        capability "Illuminance Measurement"
+        capability "Temperature Measurement"
         capability "Refresh"
-        capability "PowerMeter"
-        capability "EnergyMeter"
-        capability "WindowShade"
+        capability "Configuration"
 
-        command "calibrate"
+        // EU
+        fingerprint mfr: "0371", prod: "0002", deviceId: "002D", inClusters: "0x5E,0x22,0x55,0x98,0x9F,0x6C", secureInClusters: "0x85,0x59,0x8E,0x80,0x31,0x71,0x70,0x86,0x84,0x72,0x5A,0x87,0x73,0x7A", controllerType: "ZWV", deviceJoinName: "Aeotec TriSensor 8"
 
-        fingerprint mfr: "0460", prod: "0003", deviceId: "0082", inClusters: "0x5E,0x9F,0x55,0x6C", secureInClusters: "0x26,0x71,0x85,0x59,0x8E,0x5A,0x87,0x60,0x73,0x86,0x22,0x70,0x7A,0x72,0x32", controllerType: "ZWV", deviceJoinName: "Shelly Wave Shutter"
+        // US
+        fingerprint mfr: "0371", prod: "0102", deviceId: "002D", inClusters: "0x5E,0x22,0x55,0x98,0x9F,0x6C", secureInClusters: "0x85,0x59,0x8E,0x80,0x31,0x71,0x70,0x86,0x84,0x72,0x5A,0x87,0x73,0x7A", controllerType: "ZWV", deviceJoinName: "Aeotec TriSensor 8"
+
+        // AU
+        fingerprint mfr: "0371", prod: "0202", deviceId: "002D", inClusters: "0x5E,0x22,0x55,0x98,0x9F,0x6C", secureInClusters: "0x85,0x59,0x8E,0x80,0x31,0x71,0x70,0x86,0x84,0x72,0x5A,0x87,0x73,0x7A", controllerType: "ZWV", deviceJoinName: "Aeotec TriSensor 8"
+
     }
 
     preferences {
@@ -74,61 +77,40 @@ metadata {
 
 //Command class versions specific for the device.
 @Field static final Map commandClassVersions = [
-        0x22: 2, // COMMAND_CLASS_APPLICATION_STATUS_V2
-        0x86: 3, // COMMAND_CLASS_VERSION_V3
-        0x73: 1, // COMMAND_CLASS_POWERLEVEL_V1
-        0x60: 4, // COMMAND_CLASS_MULTI_CHANNEL_V4
-        0x87: 4, // COMMAND_CLASS_INDICATOR_V4
-        0x5A: 1, // COMMAND_CLASS_DEVICE_RESET_LOCALLY_V1
-        0x8E: 4, // COMMAND_CLASS_MULTI_CHANNEL_ASSOCIATION_V4
-        0x85: 3, // COMMAND_CLASS_ASSOCIATION_3
-        0x59: 3, // COMMAND_CLASS_ASSOCIATION_GRP_INFO_V3
-        0x71: 9, // COMMAND_CLASS_NOTIFICATION_V9
-        0x26: 4, // COMMAND_CLASS_SWITCH_MULTILEVEL_V4
-        0x25: 2, // COMMAND_CLASS_SWITCH_BINARY_V2
-        0x6C: 2, // COMMAND_CLASS_SUPERVISION_V2
-        0x55: 2, // COMMAND_CLASS_TRANSPORT_SERVICE_V2
-        0x72: 2, // COMMAND_CLASS_MANUFACTURER_SPECIFIC_V2
-        0x70: 4, // COMMAND_CLASS_CONFIGURATION_V4
         0x5E: 2, // COMMAND_CLASS_ZWAVEPLUS_INFO_V2
-        0x32: 6, // COMMAND_CLASS_METER_V6
-        0x7A: 7, // COMMAND_CLASS_FIRMWARE_UPDATE_MD_V7
         0x98: 1, // COMMAND_CLASS_SECURITY_V1
         0x9F: 1, // COMMAND_CLASS_SECURITY_2_V1
+        0x55: 2, // COMMAND_CLASS_TRANSPORT_SERVICE_V2
+        0x86: 3, // COMMAND_CLASS_VERSION_V3
+        0x73: 1, // COMMAND_CLASS_POWERLEVEL_V1
+        0x85: 2, // COMMAND_CLASS_ASSOCIATION_V2
+        0x8E: 3, // COMMAND_CLASS_MULTI_CHANNEL_ASSOCIATION_V3
+        0x59: 3, // COMMAND_CLASS_ASSOCIATION_GRP_INFO_V3
+        0x72: 2, // COMMAND_CLASS_MANUFACTURER_SPECIFIC_V2
+        0x5A: 1, // COMMAND_CLASS_DEVICE_RESET_LOCALLY_V1
+        0x80: 1, // COMMAND_CLASS_BATTERY_V1
+        0x84: 2, // COMMAND_CLASS_WAKE_UP_V2
+        0x71: 8, // COMMAND_CLASS_NOTIFICATION_V8
+        0x30: 2, // COMMAND_CLASS_SENSOR_BINARY_V2
+        0x87: 3, // COMMAND_CLASS_INDICATOR_V3
+        0x31: 11, // COMMAND_CLASS_SENSOR_MULTILEVEL_V11
+        0x70: 4, // COMMAND_CLASS_CONFIGURATION_V4
+        0x6C: 1, // COMMAND_CLASS_SUPERVISION_V1
+        0x22: 2, // COMMAND_CLASS_APPLICATION_STATUS_V2
+        0x7A: 5, // COMMAND_CLASS_FIRMWARE_UPDATE_MD_V5
 ]
 
 // Specification of configuration parameters.
 @Field static final List<Map> configParams = [
         [
                 input : [
-                        name        : "configParam1",
-                        type        : "enum",
-                        title       : "Parameter No. 1 - Push-button (momentary) / bistable (toggle switch) selection",
-                        description : "With this parameter, you can select between the switch type: push-button (momentary) or on/off toggle switch connected to SW1 and SW2 inputs.<br><b>NOTE:</b> When set = 2, 1x click on SW1 up - 1x click on SW1 stop - 1x click down",
-                        defaultValue: 0,
-                        required    : false,
-                        options     : [
-                                0: "momentary switch",
-                                1: "toggle switch (contact closed - ON / contact opened - OFF)",
-                                2: "single, momentary switch (the switch should be connected to SW1 terminal)"
-                        ],
-                ],
-                num   : 1,
-                size  : 1,
-                hidden: false,
-        ],
-        [
-                input : [
                         name        : "configParam3",
-                        type        : "enum",
-                        title       : "Parameter No. 3 – Inputs orientation",
-                        description : "This parameter allows to reverse the operation of switches connected to SW1 and SW2 inputs without changing the wiring.",
-                        defaultValue: 0,
+                        type        : "number",
+                        title       : "(Param 3) Motion Untrigger Time",
+                        description : "Timeout configuration set in second for TriSensor to send no trigger status.",
+                        defaultValue: 60,
                         required    : false,
-                        options     : [
-                                0: "default (SW1 - O1, I2 - O2)",
-                                1: "reversed (SW1 - O2, I2 - O1)",
-                        ],
+                        range       : "30..3600",
                 ],
                 num   : 3,
                 size  : 1,
@@ -136,15 +118,35 @@ metadata {
         ],
         [
                 input : [
-                        name        : "configParam5",
+                        name        : "configParam4",
                         type        : "enum",
-                        title       : "Parameter No. 5 – Output orientation",
-                        description : "This parameter allows to reverse the operation of O1 and O2 without changing the wiring (in case of invalid motor connection) to ensure proper operation.",
-                        defaultValue: 0,
+                        title       : "(Param 4) Motion Sensitivity",
+                        description : "Set the sensitivity of TriSensor.",
+                        defaultValue: 2,
                         required    : false,
                         options     : [
-                                0: "default (O1 - UP, O2 - DOWN)",
-                                1: "reversed (O1 - DOWN, O2 - UP)",
+                                0: "disable",
+                                1: "minimum sensitivity",
+                                2: "medium sensitivity",
+                                3: "maximum sensitivity",
+                        ],
+                ],
+                num   : 4,
+                size  : 1,
+                hidden: false,
+        ],
+        [
+                input : [
+                        name        : "configParam5",
+                        type        : "enum",
+                        title       : "(Param 5) Motion Report Type",
+                        description : "Sends Notification or Sensor Binary Report.",
+                        defaultValue: 2,
+                        required    : false,
+                        options     : [
+                                0: "Send Notification Report",
+                                1: "Send Sensor Binary Report",
+                                2: "Send Notification and Sensor Binary Report",
                         ],
                 ],
                 num   : 5,
@@ -153,138 +155,175 @@ metadata {
         ],
         [
                 input : [
-                        name        : "configParam40",
+                        name        : "configParam14",
                         type        : "number",
-                        title       : "Parameter No. 40 - Power Consumption Reporting",
-                        description : "Choose by how much the power (W) consumption needs to increase or decrease to be reported. Values correspond to percentages, so if 50 is set (by default), the Device will report any power consumption changes of 50 % or more, compared to the last reading.<br>&bull; 0 - Power consumption reporting disabled<br>&bull; 1 % - 100 % Power consumption reporting enabled. New value is reported only when the power consumption in real time changes by more than the percentage value set in this parameter, compared to the previous power consumption reading, starting at 1 % (the lowest value possible).<br><b>NOTE:</b> Power consumption needs to increase or decrease by at least 1 Watt to be reported, REGARDLESS of the percentage set in this parameter.",
-                        defaultValue: 50,
+                        title       : "(Param 14) Low Battery Threshold",
+                        description : "Configure low battery report threshold, sends low battery report via notification and battery report when battery level drops under setting. Unit %.",
+                        defaultValue: 20,
                         required    : false,
-                        range       : "0..100"
+                        range       : "10..50"
                 ],
-                num   : 40,
+                num   : 14,
                 size  : 1,
                 hidden: false,
         ],
         [
                 input : [
-                        name        : "configParam71",
+                        name        : "configParam15",
                         type        : "enum",
-                        title       : "Parameter No. 71 - Operating modes",
-                        description : "Choose between the two operating modes. In shutter mode, you can select up/down/stop. In venetian mode, an additional widget/endpoint is displayed in the UI interface, which you can use to control the tilt position of the slats.",
+                        title       : "(Param 15) Threshold Check Enable/Disable",
+                        description : "If enabled the sensor will send reports if a change from last reported value exceed a configured threshold upon a periodic threshold check.",
                         defaultValue: 0,
                         required    : false,
                         options     : [
-                                0: "Shutter mode",
-                                1: "Venetian mode with (up/down and slats rotation)",
+                                0: "disable threshold reports",
+                                1: "enable threshold reports",
                         ],
                 ],
-                num   : 71,
+                num   : 15,
                 size  : 1,
                 hidden: false,
         ],
         [
                 input : [
-                        name        : "configParam72",
+                        name        : "configParam16",
                         type        : "number",
-                        title       : "Parameter No. 72 - Venetian blind slats turning time",
-                        description : "Set the time required for the slats to make a full turn (180 degrees).<br>NOTE: Make sure that working mode is set to venetian (Par. No. 71 =1)<br>&bull; 0 - turning time disabled<br>&bull; 1 - 32000 = 0.01 seconds – 320 seconds<br><b>NOTE:</b> If the set time is too long and a full turn was already performed, the device will start moving up or down for the remaining time. In this case, shorten the turning time.",
-                        defaultValue: 150,
+                        title       : "(Param 16) Temperature Threshold",
+                        description : "Threshold value for temperature. Provided value is multiplied by 0.1, set to 0 to disable.",
+                        defaultValue: 30,
                         required    : false,
-                        range       : "0..32000"
+                        range       : "0..255"
                 ],
-                num   : 72,
+                num   : 16,
+                size  : 1,
+                hidden: false,
+        ],
+        [
+                input : [
+                        name        : "configParam17",
+                        type        : "number",
+                        title       : "(Param 17) Lux Threshold",
+                        description : "Threshold value for Lux. Set to 0 to disable.",
+                        defaultValue: 250,
+                        required    : false,
+                        range       : "0..10000"
+                ],
+                num   : 17,
                 size  : 2,
                 hidden: false,
         ],
         [
                 input : [
-                        name        : "configParam73",
-                        type        : "enum",
-                        title       : "Parameter No. 73 - Slats position after moving",
-                        description : "This parameter is used to enable/disable the slats to return to the previously set position, after being activated via the gateway, push-button operation or when the lower limit switch is reached.<br><b>NOTE:</b> Make sure that working mode is set to venetian (Par. No. 71=1)",
-                        defaultValue: 1,
-                        required    : false,
-                        options     : [
-                                0: "disable",
-                                1: "enable",
-                        ],
-                ],
-                num   : 73,
-                size  : 1,
-                hidden: false,
-        ],
-        [
-                input : [
-                        name        : "configParam76",
+                        name        : "configParam18",
                         type        : "number",
-                        title       : "Parameter No. 76 - Motor operation detection",
-                        description : "Define the power consumption threshold at the end positions. Based on this value, the Device will know that the shutters reached the limit switches.<br>&bull; 0 - Disabled: reaching a limit switch will not be detected<br>&bull; 1 - Auto power calibration<br>&bull; 2 - 2-255 (2-255W) - report interval<br><b>NOTE:</b> For correct auto power calibration the shutter calibration must be performed!",
-                        defaultValue: 1,
+                        title       : "(Param 18) Threshold Check Time",
+                        description : "Set threshold check time in seconds.",
+                        defaultValue: 900,
                         required    : false,
-                        range       : "0..255"
+                        range       : "60-65535"
                 ],
-                num   : 76,
-                size  : 1,
+                num   : 18,
+                size  : 2,
                 hidden: false,
         ],
         [
                 input : [
-                        name        : "configParam78",
+                        name        : "configParam24",
                         type        : "enum",
-                        title       : "Parameter No. 78 – Forced shutter calibration",
-                        description : "By setting this parameter to value 1 the Device will start executing force calibration procedure. The parameter also reports the calibration status by sending the get parameter value command.<br>NOTE: Check chapter Functionality with calibration details.<br>NOTE: During the calibration procedure the blind moves up, down, up, and down to 50%.<br>NOTE: During the calibration procedure the yellow LED is blinking.",
-                        defaultValue: 3,
+                        title       : "(Param 24) Temperature Scale",
+                        description : "Set the scale for temperature when reports.",
+                        defaultValue: 0,
                         required    : false,
                         options     : [
-                                1: "start calibration",
-                                2: "device is calibrated (read only)",
-                                3: "device is not calibrated (read only)",
-                                4: "calibration error (read only)",
+                                0: "Celsius",
+                                1: "Fahrenheit",
                         ],
                 ],
-                num   : 78,
+                num   : 24,
                 size  : 1,
                 hidden: true,
         ],
         [
                 input : [
-                        name        : "configParam80",
+                        name        : "configParam25",
                         type        : "number",
-                        title       : "Parameter No. 80 – Motor stop delay after limit switch detection",
-                        description : "This parameter defines the delay time for the motor to turn off, after reaching the limit switch.<br>&bull; Default value 10 = (1s)<br>&bull; 0-127 (0-12.7s) - time",
-                        defaultValue: 10,
+                        title       : "(Param 25) Sensor Report Interval",
+                        description : "Determines the interval in seconds in which temperature and lux sensor values are reported regardless of change.",
+                        defaultValue: 3600,
                         required    : false,
-                        range       : "0..255"
+                        range       : "30..65535"
                 ],
-                num   : 80,
+                num   : 25,
+                size  : 2,
+                hidden: false,
+        ],
+        [
+                input : [
+                        name        : "configParam26",
+                        type        : "enum",
+                        title       : "(Param 26) LED Activity",
+                        description : "Allow user to enable/disable LED activity of specific reports sent by sensor. Button press indicator is not affected by this.",
+                        defaultValue: 1,
+                        required    : false,
+                        options     : [
+                                0: "disabled",
+                                1: "enable",
+                        ],
+                ],
+                num   : 26,
                 size  : 1,
                 hidden: false,
         ],
         [
                 input : [
-                        name        : "configParam85",
-                        type        : "number",
-                        title       : "Parameter No. 85 – Power consumption max delay time",
-                        description : "Define the maximum time before the power consumption of the motor is read from the Device, after one of the relays is switched on. If there is no power consumption during the set time (motor is not connected, damaged or requires longer time to start, motor is at the end position), the relay will switch off. This time is defined by entering it manually.<br>&bull; 0 = time is set automatically<br>&bull; 3 - 50 = 0.3seconds – 5seconds (100ms resolution)",
-                        defaultValue: 30,
+                        name        : "configParam27",
+                        type        : "enum",
+                        title       : "(Param 27) Motion Sensor Report Indicator",
+                        description : "If LED is enabled by Param 26, allow user to change the report color of motion sensor.",
+                        defaultValue: 3,
                         required    : false,
-                        range       : "0..50"
+                        options     : [
+                                0: "disabled",
+                                1: "Red",
+                                2: "Blue",
+                                3: "Green",
+                                4: "Pink",
+                                5: "Cyan",
+                                6: "Purple",
+                                7: "Orange",
+                                8: "Yellow",
+                                9: "White",
+                        ],
                 ],
-                num   : 85,
+                num   : 27,
                 size  : 1,
                 hidden: false,
         ],
         [
                 input : [
-                        name        : "configParam91",
+                        name        : "configParam28",
                         type        : "number",
-                        title       : "Parameter No. 91 - Max. Motor moving time",
-                        description : "When the shutter is not calibrated (or the motor is not equipped with a limit switch), this parameter defines the movement time of the motor.<br>&bull; Default value: 12000 (120s)<br>&bull; value = 1 - 32000 (10ms - 320s)",
-                        defaultValue: 12000,
+                        title       : "(Param 28) Temperature Offset Value",
+                        description : "Can add or minus this setting value to calibrate temperature when checked. Scale is defined by Param 24, e.g. value 15 means 1.5C or 1.5F.",
+                        defaultValue: 0,
                         required    : false,
-                        range       : "1..32000"
+                        range       : "-200..200"
                 ],
-                num   : 91,
+                num   : 28,
+                size  : 2,
+                hidden: false,
+        ],
+        [
+                input : [
+                        name        : "configParam29",
+                        type        : "number",
+                        title       : "(Param 29) Lux Offset Value",
+                        description : "Can add or minus this setting value to calibrate Lux when checked.",
+                        defaultValue: 0,
+                        required    : false,
+                        range       : "-10000..10000"
+                ],
+                num   : 29,
                 size  : 2,
                 hidden: false,
         ],
@@ -296,241 +335,225 @@ metadata {
 void installed() {
     logWarn "installed driver version: ${VERSION}"
 
-    runIn(10, configure)
+    sendEvent(name: 'motion', value: 'inactive')
+    sendEvent(name: 'illuminance', value: 100)
+    sendEvent(name: 'temperature', value: 50)
+    sendEvent(name: 'battery', value: 100)
+
+    configure()
+    refresh()
 }
 
 void configure() {
-    logWarn "performing configuration..."
+    logWarn "preparing initialization, actions will be performed during next wakeup..."
 
-    List<hubitat.zwave.Command> cmds = [
-            versionGetCmd(),
-            mfgSpecificGetCmd(),
-            deviceSpecificGetCmd(),
-    ]
-
-    // Refresh all parameters.
-    configParams.each { param ->
-        cmds += configGetCmd(param)
-    }
-
-    runIn(cmds.size() * 2, refresh)
-
-    sendCommands(cmds)
+    state.initializeOnNextWakeup = true
 }
 
 void refresh() {
-    logWarn "performing device state refresh..."
+    logWarn "preparing device state refresh, actions will be performed during next wakeup..."
 
-    List<hubitat.zwave.Command> cmds = [
-            switchMultilevelGetCmd(1),
-            meterGetCmd(0),
-            meterGetCmd(2),
-            configGetCmd(getParam(78)),
-    ]
-
-    sendCommands(cmds)
+    state.refreshOnNextWakeup = true
 }
 
 void updated() {
-    logWarn "performing preferences update..."
+    logWarn "preparing preferences update, configuration of the device will be updated during next wakeup..."
 
     checkLogLevel()
 
-    sendCommands(getConfigureCmds())
+    state.configureOnNextWakeup = true
 }
 
 //endregion Core Functions
 
-//region Capabilities Functions
-
-void open() {
-    List<hubitat.zwave.Command> cmds = [
-            switchMultilevelSetCmd((Integer) 99, 0, 1),
-    ]
-
-    // If the device does not support S2 security, request the state to be updated.
-    if (!supportsSupervision()) {
-        cmds.add(switchMultilevelGetCmd(1))
-    }
-
-    sendCommands(cmds, 200)
-}
-
-void close() {
-    List<hubitat.zwave.Command> cmds = [
-            switchMultilevelSetCmd((Integer) 0, 0, 1),
-    ]
-
-    // If the device does not support S2 security, request the state to be updated.
-    if (!supportsSupervision()) {
-        cmds.add(switchMultilevelGetCmd(1))
-    }
-
-    sendCommands(cmds, 200)
-}
-
-void setPosition(position) {
-    if (position > 99) {
-        position = 99
-    } else if (position < 0) {
-        position = 0
-    }
-
-    List<hubitat.zwave.Command> cmds = [
-            switchMultilevelSetCmd((Integer) position, 0, 1),
-    ]
-
-    // If the device does not support S2 security, request the state to be updated.
-    if (!supportsSupervision()) {
-        cmds.add(switchMultilevelGetCmd(1))
-    }
-
-    sendCommands(cmds, 200)
-}
-
-void startPositionChange(String direction) {
-    List<hubitat.zwave.Command> cmds = []
-
-    if (direction == "open") {
-        cmds.add(switchMultilevelStartLvChCmd(false, 0, 1))
-    } else if (direction == "close") {
-        cmds.add(switchMultilevelStartLvChCmd(true, 0, 1))
-    } else {
-        logErr("Invalid direction: ${direction}")
-        return
-    }
-
-    // If the device does not support S2 security, request the state to be updated.
-    if (!supportsSupervision()) {
-        cmds.add(switchMultilevelGetCmd(1))
-    }
-
-    sendCommands(cmds, 200)
-}
-
-void stopPositionChange() {
-    sendCommands(switchMultilevelStopLvChCmd())
-}
-
-void calibrate() {
-    sendCommands(configSetGetCmd(getParam(78), 1))
-}
-
-//endregion Capabilities Functions
-
 //region Device Specific Handlers
 
-void zwaveEvent(hubitat.zwave.commands.switchmultilevelv4.SwitchMultilevelReport cmd, ep = 0) {
+def zwaveEvent(hubitat.zwave.commands.notificationv8.NotificationReport cmd, ep = 0) {
     logTrace "${cmd}"
 
-    // We handle this way an unknown position reported as 254 which can happen if blinds are not calibrated.
-    Short position = cmd.value
-    if (position > 99) {
-        position = 99
-    }
-
-    sendEventWrapper(name: "position", value: position, unit: "%", descriptionText: "Shade position is ${position} %")
-
-    updateWindowShade(cmd.value, cmd.targetValue)
-}
-
-void zwaveEvent(hubitat.zwave.commands.meterv6.MeterReport cmd, ep = 0) {
-    logTrace "${cmd}"
-    switch (cmd.scale) {
-        case 0x00:
-            sendEventWrapper(name: "energy", value: cmd.scaledMeterValue, unit: "kWh", descriptionText: "Device consumed ${cmd.scaledMeterValue} kWh")
-            break;
-        case 0x02:
-            sendEventWrapper(name: "power", value: cmd.scaledMeterValue, unit: "W", descriptionText: "Device consumes ${cmd.scaledMeterValue} W")
-            break;
+    switch (cmd.notificationType) {
+        case 0x07:
+            switch (cmd.event) {
+                case 0:
+                    sendMotionEvent(0)
+                    break
+                case 8:
+                    sendMotionEvent(1)
+                    break
+                default:
+                    logWarn "zwaveEvent(NotificationReport) - Unhandled event - cmd: ${cmd.inspect()}"
+                    break;
+            }
+            break
         default:
-            logWarn("Skipped Z-Wave MeterReport: ${cmd.inspect()}")
+            logWarn "zwaveEvent(NotificationReport) - Unhandled notificationType - cmd: ${cmd.inspect()}"
+            break;
     }
 }
 
-// We handle successful supervision report for set level command to correctly show temporary window shade status change to "opening" or "closing".
-void handleSupervisionResult(hubitat.zwave.commands.switchmultilevelv4.SwitchMultilevelSet cmd, ep = 0, result, position) {
-    // Upon receiving set level command within supervision Shelly Wave Shutter correctly responds with "working" status as it is always going to take some time for the blinds to reach the desired position.
-    if (result == 0x01) {
-        updateWindowShade(position, cmd.value)
-    }
+void zwaveEvent(hubitat.zwave.commands.sensorbinaryv2.SensorBinaryReport cmd, ep = 0) {
+    logTrace "${cmd}"
+    // Sensor sends value 0xFF on motion, 0x00 on no motion.
+    sendMotionEvent(cmd.sensorValue)
 }
 
-// We handle successful supervision report for start level change command to correctly show temporary window shade status change to "opening" or "closing".
-void handleSupervisionResult(hubitat.zwave.commands.switchmultilevelv4.SwitchMultilevelStartLevelChange cmd, ep = 0, result, position) {
-    // Upon receiving start level change command within supervision Shelly Wave Shutter responds with "success" status, instead of "working".
-    if (result == 0xFF) {
-        // We interpret start level change command "up" as target value 99 and "down" as target value "0".
-        targetValue = 99
-        if (cmd.upDown == true) {
-            targetValue = 0
-        }
-
-        updateWindowShade(position, targetValue)
+private sendMotionEvent(value) {
+    Map event = [name: "motion"]
+    if (value) {
+        event.value = "active"
+        event.descriptionText = "Motion is active"
+    } else {
+        event.value = "inactive"
+        event.descriptionText = "Motion is inactive"
     }
+
+    sendEventWrapper(event)
 }
 
-// Defines custom behaviors for specific parameters.
-void handleParameterReport(Map param, value) {
-    switch (param.num) {
-        case 78:
-            updateCalibrationStatus(value)
-            break
-    }
-}
+void zwaveEvent(hubitat.zwave.commands.sensormultilevelv11.SensorMultilevelReport cmd, ep = 0) {
+    logTrace "${cmd}"
 
-// Updates window shade status based on multi-level report.
-void updateWindowShade(value, targetValue) {
-    // If the shutter is not yet calibrated it may return value 254.
-    if (value > 99 || targetValue > 99) {
-        sendEventWrapper(name: "windowShade", value: "unknown", descriptionText: "Shade is in unknown state")
-        return
-    }
+    Map event = [:]
 
-    // If value and target value are equal 0 it means the calibrated shades are closed.
-    if (value == 0 && targetValue == 0) {
-        sendEventWrapper(name: "windowShade", value: "closed", descriptionText: "Shade is closed")
-        return
-    }
-
-    // If value and target value are equal 99 it means the calibrated shades are open.
-    if (value == 99 && targetValue == 99) {
-        sendEventWrapper(name: "windowShade", value: "open", descriptionText: "Shade is open")
-        return
-    }
-
-    // If value is higher than the target value then the shades are closing.
-    if (value > targetValue) {
-        sendEventWrapper(name: "windowShade", value: "closing", descriptionText: "Shade is closing")
-        return
-    }
-
-    // If value is smaller than the target value then the shades are opening.
-    if (value < targetValue) {
-        sendEventWrapper(name: "windowShade", value: "opening", descriptionText: "Shade is opening")
-        return
-    }
-
-    // Otherwise if value and target value are the same, while being higher than 0 and less than 99 it means the shades are partially open.
-    sendEventWrapper(name: "windowShade", value: "partially open", descriptionText: "Shade is partially open")
-}
-
-// Updates state to reflect calibration status.
-void updateCalibrationStatus(value) {
-    switch (value) {
+    switch (cmd.sensorType) {
         case 1:
-            state.calibrationStatus = "pending"
-            break
-        case 2:
-            state.calibrationStatus = "calibrated"
+            event.name = "temperature"
+            event.value = convertTemperatureIfNeeded(cmd.scaledSensorValue, cmd.scale == 1 ? "f" : "c", cmd.precision)
+            event.unit = "°" + getTemperatureScale()
+            event.descriptionText = "Temperature is ${event.value} ${event.unit}"
+            sendEventWrapper(event)
             break
         case 3:
-            state.calibrationStatus = "not calibrated"
+            event.name = "illuminance"
+            event.value = cmd.scaledSensorValue
+            event.unit = "lux"
+            event.descriptionText = "Illuminance is ${event.value} ${event.unit}"
+            sendEventWrapper(event)
             break
-        case 4:
-            state.calibrationStatus = "calibration error"
-            break
+        default:
+            logWarn "zwaveEvent(SensorMultilevelReport) - Unknown sensorType - cmd: ${cmd.inspect()}"
+            break;
     }
+}
+
+//endregion
+
+//region Sleepy Device Specific Handlers
+
+//Additional preferences for sleepy devices.
+preferences {
+    input name: "wakeUpInterval", type: "enum", title: "Device Wake Up Interval",
+            description: "Interval at which the battery-powered device will check-in to receive commands and configuration.", defaultValue: 43200, options: [
+            300   : "5m",
+            900   : "15m",
+            1800  : "30m",
+            3600  : "1h",
+            7200  : "2h",
+            10800 : "3h",
+            21600 : "6h",
+            43200 : "12h",
+            86400 : "24h",
+            172800: "48h",
+    ]
+    input name: "batteryReportInterval", type: "enum", title: "Battery Report Interval",
+            description: "Interval at which the battery level will be requested if there was no report sent by the device itself.", defaultValue: 172800, options: [
+            21600 : "6h",
+            43200 : "12h",
+            86400 : "1d",
+            172800: "2d",
+            604800: "1w",
+    ]
+}
+
+Boolean requireBatteryReport() {
+    Boolean refresh = true
+
+    device.getCurrentStates().each { state ->
+        if (state.name == "battery") {
+            diff = TimeCategory.minus(new Date(), state.date)
+            reportInterval = safeToDec(settings.batteryReportInterval, 2*24*60*60)
+            if (reportInterval > (diff.toMilliseconds()/1000)) {
+                refresh = false
+            }
+        }
+    }
+
+    return refresh
+}
+
+void zwaveEvent(hubitat.zwave.commands.batteryv1.BatteryReport cmd, ep = 0) {
+    logTrace "${cmd}"
+
+    if (cmd.batteryLevel == 0xFF) {
+        sendEventWrapper(name: "battery", value: 1, unit: "%", descriptionText: "Device has low battery level.")
+    } else {
+        sendEventWrapper(name: "battery", value: cmd.batteryLevel, unit: "%", descriptionText: "Device battery is at ${cmd.batteryLevel}%.")
+    }
+}
+
+void zwaveEvent(hubitat.zwave.commands.wakeupv2.WakeUpIntervalReport cmd, ep = 0) {
+    logTrace "${cmd}"
+    BigDecimal wakeHrs = safeToDec(cmd.seconds / 3600, 0, 2)
+    logDebug "WakeUp Interval is $cmd.seconds seconds ($wakeHrs hours)"
+    device.updateDataValue("zwWakeupInterval", "${cmd.seconds}")
+    device.updateSetting("wakeUpInterval", [value: "${cmd.seconds}", type: "enum"])
+}
+
+void zwaveEvent(hubitat.zwave.commands.wakeupv2.WakeUpNotification cmd, ep = 0) {
+    logDebug "WakeUp Notification Received"
+    logTrace "${cmd}"
+
+
+    List<hubitat.zwave.Command> cmds = []
+
+    // If device was not initialized we need to retrieve basic data from it.
+    if (state.initializeOnNextWakeup) {
+        logWarn "performing scheduled initialization..."
+
+        cmds += versionGetCmd()
+        cmds += mfgSpecificGetCmd()
+        cmds += deviceSpecificGetCmd()
+        cmds += wakeUpIntervalGetCmd()
+
+        configParams.each { param ->
+            cmds += configGetCmd(param)
+        }
+
+        state.initializeOnNextWakeup = false
+    }
+
+    // If it was requested to refresh device readings we need to ask for the reports.
+    if (state.refreshOnNextWakeup) {
+        logWarn "performing scheduled refresh..."
+
+        cmds += sensorBinaryGetCmd(12)
+        cmds += batteryGetCmd()
+        cmds += sensorMultilevelGetCmd(1, getTemperatureScale())
+        cmds += sensorMultilevelGetCmd(3, 0)
+
+        state.refreshOnNextWakeup = false
+    }
+
+    // If it was requested to update configuration all configuration options will be sent.
+    if (state.configureOnNextWakeup == true) {
+        logWarn "performing scheduled configuration..."
+
+        cmds += getConfigureCmds()
+        cmds += wakeUpIntervalSetCmd(settings.wakeUpInterval as Integer)
+        cmds += wakeUpIntervalGetCmd()
+
+        state.configureOnNextWakeup = false
+    }
+
+    if (requireBatteryReport() == true) {
+        logWarn "refreshing battery report..."
+
+        cmds += batteryGetCmd()
+    }
+
+    cmds << "delay 1400" << wakeUpNoMoreInfoCmd()
+
+    sendCommands(cmds, 400)
 }
 
 //endregion
@@ -677,13 +700,12 @@ void zwaveEvent(hubitat.zwave.commands.configurationv4.ConfigurationReport cmd) 
         }
 
         logDebug "${param.input.title} (#${param.num}) = ${val.toString()}"
+
         if (param.input.type == "enum") {
             device.updateSetting("configParam${cmd.parameterNumber}", [value: "${val.toString()}", type: "enum"])
         } else {
             device.updateSetting("configParam${cmd.parameterNumber}", val as Long)
         }
-
-        handleParameterReport(param, val)
     } else {
         logDebug "Parameter #${cmd.parameterNumber} = ${val.toString()}"
     }
@@ -746,8 +768,32 @@ String meterResetCmd(Integer ep = 0) {
     return secureCmd(zwave.meterV6.meterReset(), ep)
 }
 
+String wakeUpIntervalGetCmd() {
+    return secureCmd(zwave.wakeUpV2.wakeUpIntervalGet())
+}
+
+String wakeUpIntervalSetCmd(val) {
+    return secureCmd(zwave.wakeUpV2.wakeUpIntervalSet(seconds: val, nodeid: zwaveHubNodeId))
+}
+
+String wakeUpNoMoreInfoCmd() {
+    return secureCmd(zwave.wakeUpV2.wakeUpNoMoreInformation())
+}
+
+String batteryGetCmd() {
+    return secureCmd(zwave.batteryV1.batteryGet())
+}
+
+String sensorBinaryGetCmd(sensorType) {
+  return secureCmd(zwave.sensorBinaryV2.sensorBinaryGet(sensorType: sensorType))
+}
+
+String sensorMultilevelGetCmd(sensorType, scale) {
+    return secureCmd(zwave.sensorMultilevelV11.sensorMultilevelGet(scale: scale, sensorType: sensorType))
+}
+
 String notificationGetCmd(notificationType, eventType, Integer ep = 0) {
-    return secureCmd(zwave.notificationV9.notificationGet(notificationType: notificationType, v1AlarmType: 0, event: eventType), ep)
+    return secureCmd(zwave.notificationV8.notificationGet(notificationType: notificationType, v1AlarmType: 0, event: eventType), ep)
 }
 
 String configSetCmd(Map param, Integer value) {

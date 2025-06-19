@@ -1,0 +1,19 @@
+{
+  "packageName": "Aeotec TriSensor 8",
+  "author": "Boguslaw Wojcik (@bogus.wojcik)",
+  "minimumHEVersion": "2.3.5",
+  "dateReleased": "2025-06-19",
+  "documentationLink": "https://community.hubitat.com/t/release-aeotec-trisensor-8-community-driver/154427",
+  "communityLink": "https://community.hubitat.com/t/release-aeotec-trisensor-8-community-driver/154427",
+  "releaseNotes": "- v0.1.0 - 19.06.2025: Initial working version.",
+  "version": "0.1.0",
+  "drivers": [
+    {
+      "id": "6c01ba6c-25eb-4ec6-a845-3357eb925406",
+      "name": "Aeotec TriSensor 8",
+      "namespace": "boguslaw-wojcik",
+      "location": "https://raw.githubusercontent.com/boguslaw-wojcik/hubitat/main/drivers/aeotec/trisensor_8_multisensor.groovy",
+      "required": true
+    }
+  ]
+}

@@ -2,11 +2,11 @@
   "packageName": "Shelly Wave Shutter",
   "author": "Boguslaw Wojcik (@bogus.wojcik)",
   "minimumHEVersion": "2.3.5",
-  "dateReleased": "2025-05-03",
+  "dateReleased": "2025-06-19",
   "documentationLink": "https://community.hubitat.com/t/release-shelly-wave-shutter-community-driver/153207",
   "communityLink": "https://community.hubitat.com/t/release-shelly-wave-shutter-community-driver/153207",
-  "releaseNotes": "- v0.1.0 - 03.05.2025: Initial working version.",
-  "version": "0.1.0",
+  "releaseNotes": "-v0.1.1 - 19.06.2025: Minor fix when reading enumerated configuration params.\n- v0.1.0 - 03.05.2025: Initial working version.",
+  "version": "0.1.1",
   "drivers": [
     {
       "id": "1291da97-d907-4808-bb35-8b60d14a47a6",
