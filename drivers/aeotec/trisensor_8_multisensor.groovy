@@ -4,6 +4,7 @@
  * 	Author: Bogusław Wójcik
  *
  * 	CHANGELOG:
+ * 	- v0.1.1 - 25.06.2025: Safeguard against logging level set when using Aeotec Support's driver.
  *  - v0.1.0 - 19.06.2025: Initial working version.
  *
  *  DESCRIPTION:
@@ -33,7 +34,7 @@
 import groovy.transform.Field
 import groovy.time.TimeCategory
 
-@Field static final String VERSION = "0.1.0"
+@Field static final String VERSION = "0.1.1"
 
 metadata {
     definition(
@@ -346,6 +347,11 @@ void installed() {
 
 void configure() {
     logWarn "preparing initialization, actions will be performed during next wakeup..."
+
+    // Cleanup of unused values from a different driver.
+    state.remove("deviceInfo")
+    state.remove("driverInfo")
+    removeDataValue("MSR")
 
     state.initializeOnNextWakeup = true
 }
@@ -785,7 +791,7 @@ String batteryGetCmd() {
 }
 
 String sensorBinaryGetCmd(sensorType) {
-  return secureCmd(zwave.sensorBinaryV2.sensorBinaryGet(sensorType: sensorType))
+    return secureCmd(zwave.sensorBinaryV2.sensorBinaryGet(sensorType: sensorType))
 }
 
 String sensorMultilevelGetCmd(sensorType, scale) {
@@ -1093,8 +1099,20 @@ void checkLogLevel(Map levelInfo = [level: null, time: null]) {
 
 // Returns effective log level.
 Map getLogLevelInfo() {
-    Integer level = settings.logLevel != null ? settings.logLevel as Integer : 1
-    Integer time = settings.logLevelTime != null ? settings.logLevelTime as Integer : 30
+    Integer level
+    try {
+        level = settings.logLevel != null ? settings.logLevel as Integer : 1
+    } catch (Exception e) {
+        level = 1
+    }
+
+    Integer time
+    try {
+        time = settings.logLevelTime != null ? settings.logLevelTime as Integer : 30
+    } catch (Exception e) {
+        time = 30
+    }
+
     return [level: level, time: time]
 }
 

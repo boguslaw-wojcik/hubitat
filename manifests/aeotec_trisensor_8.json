@@ -2,11 +2,11 @@
   "packageName": "Aeotec TriSensor 8",
   "author": "Boguslaw Wojcik (@bogus.wojcik)",
   "minimumHEVersion": "2.3.5",
-  "dateReleased": "2025-06-19",
+  "dateReleased": "2025-06-25",
   "documentationLink": "https://community.hubitat.com/t/release-aeotec-trisensor-8-community-driver/154427",
   "communityLink": "https://community.hubitat.com/t/release-aeotec-trisensor-8-community-driver/154427",
-  "releaseNotes": "- v0.1.0 - 19.06.2025: Initial working version.",
-  "version": "0.1.0",
+  "releaseNotes": "- v0.1.1 - 25.06.2025: Safeguard against logging level set when using Aeotec Support's driver.\n- v0.1.0 - 19.06.2025: Initial working version.",
+  "version": "0.1.1",
   "drivers": [
     {
       "id": "6c01ba6c-25eb-4ec6-a845-3357eb925406",

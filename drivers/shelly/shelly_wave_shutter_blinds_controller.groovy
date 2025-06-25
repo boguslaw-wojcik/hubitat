@@ -4,6 +4,7 @@
  *	Author: Bogusław Wójcik
  *
  *	CHANGELOG:
+ * 	- v0.1.2 - 25.06.2025: Minor safeguard against logging level set by different custom driver.
  *  - v0.1.1 - 19.06.2025: Minor fix when reading enumerated configuration params.
  *  - v0.1.0 - 03.05.2025: Initial working version.
  *
@@ -1047,8 +1048,20 @@ void checkLogLevel(Map levelInfo = [level: null, time: null]) {
 
 // Returns effective log level.
 Map getLogLevelInfo() {
-    Integer level = settings.logLevel != null ? settings.logLevel as Integer : 1
-    Integer time = settings.logLevelTime != null ? settings.logLevelTime as Integer : 30
+    Integer level
+    try {
+        level = settings.logLevel != null ? settings.logLevel as Integer : 1
+    } catch (Exception e) {
+        level = 1
+    }
+
+    Integer time
+    try {
+        time = settings.logLevelTime != null ? settings.logLevelTime as Integer : 30
+    } catch (Exception e) {
+        time = 30
+    }
+
     return [level: level, time: time]
 }
 
