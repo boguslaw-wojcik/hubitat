@@ -77,7 +77,7 @@ metadata {
     input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
     input name: "reportStopped", type: "bool", title: "Report stopped state instead of unknown", defaultValue: true
     input name: "supervisionMode", type: "enum", title: "Outbound supervision",
-      description: "Auto: use supervision, but stop if the hub never delivers the reports (Z-Wave JS behaviour).",
+      description: "Auto: on for S2 devices on the legacy stack, off on Z-Wave JS where the stack supervises for us.",
       options: ["auto": "Auto (recommended)", "always": "Always", "never": "Never"], defaultValue: "auto"
     input name: "watchdogEnable", type: "bool", title: "Poll for state if no report arrives after a command", defaultValue: true
     input name: "watchdogDelay", type: "number", title: "Watchdog delay (seconds)", range: "1..30", defaultValue: 2
@@ -158,9 +158,10 @@ String getContactState(Short value, Short targetValue) {
 // This is a helper function to report the state of the barrier and contact sensor.
 // Any call here means we learned something authoritative, so the watchdog poll is no longer needed.
 void reportState(String barrierState, String contactState, String source = "report") {
-  state.lastStateSource = source
   state.lastStateAt = now()
   unschedule("stateWatchdog")
+
+  logger("debug", "reportState() - from ${source}")
 
   sendEventWrapper(name:"door", value: barrierState, descriptionText:"Barrier is ${barrierState}")
   sendEventWrapper(name:"contact", value: contactState, descriptionText:"Contact is ${contactState}")
@@ -218,34 +219,59 @@ void scheduleWatchdog() {
 
 // Human readable description of what we believe the hub's Z-Wave stack is doing, for logs.
 String describeStack() {
-  if (state.supervisionWorks == true) { return "supervision reports observed (legacy Z/IP behaviour)" }
-  if (state.supervisionWorks == false) { return "no supervision reports (Z-Wave JS behaviour)" }
-  return "unknown"
+  return isZwaveJs() ? "Z-Wave JS" : "legacy Z/IP"
+}
+
+// Removes working values that earlier revisions of this driver wrote to `state`, so they stop showing
+// on the device page. Only touches keys this driver no longer uses; safe to call at any time.
+private void cleanupState() {
+  ["posCurrent", "posTarget", "lastStateSource", "commandedTarget", "cleaned",
+   "stackIsJs", "supervisionWorks", "supervisionMisses"].each {
+    if (state.containsKey(it)) {
+      logger("debug", "cleanupState() - removing obsolete state variable '${it}'")
+      state.remove(it)
+    }
+  }
+}
+
+/* Z-Wave stack detection */
+
+// True when the hub is running the Z-Wave JS stack rather than the legacy Z/IP one.
+//
+// zwaveSecureEncap() formats a command for whichever stack is active and returns the string that would
+// be transmitted: a JSON document on Z-Wave JS, a hex frame on legacy. It only formats - nothing is
+// sent, and a Get allocates no supervision session - so this is a pure local check with no I/O.
+// Measured at 1-2 ms, against ~1.9 s for zwave.getStoredValues(), which is a blocking round trip to
+// the zwave-js server and therefore unusable anywhere near a command path.
+//
+// Being cheap and synchronous, this needs no cached flag and no traffic to have arrived first, which
+// is why the driver no longer keeps a latched stackIsJs / supervisionWorks state variable.
+Boolean isZwaveJs() {
+  try {
+    return zwaveSecureEncap(zwave.versionV3.versionGet().format())?.trim()?.startsWith("{")
+  } catch (e) {
+    logger("warn", "isZwaveJs() - could not determine the Z-Wave stack (${e}), assuming legacy")
+    return false
+  }
 }
 
 void installed() {
   log.info "installed(${VERSION})"
+  cleanupState()
   sendEvent(name: "door", value: "unknown")
   sendEvent(name: "contact", value: "unknown")
-  state.supervisionWorks = null   // Unknown until we observe the hub's behaviour.
-  state.supervisionMisses = 0
   runIn(10, refresh)  // Get current device state after being installed.
 }
 
 void updated() {
   log.debug "updated()"
+  cleanupState()
   log.warn "reporting stopped state is: ${reportStopped == true}"
   log.warn "debug logging is: ${logEnable == true}"
   log.warn "description logging is: ${txtEnable == true}"
-  log.warn "outbound supervision is: ${supervisionMode ?: 'auto'} (currently ${useSupervision() ? 'on' : 'off'}, ${describeStack()})"
+  log.warn "Z-Wave stack detected: ${describeStack()}"
+  log.warn "outbound supervision is: ${supervisionMode ?: 'auto'} (currently ${useSupervision() ? 'on' : 'off'})"
   log.warn "state watchdog is: ${watchdogEnable != false} (${watchdogDelay ?: 2}s), travel confirmation is: ${travelConfirm != false} (${travelTime ?: 30}s)"
-
-  // An explicit mode change clears the auto-detection, so switching stacks and flipping the preference
-  // back to "auto" starts from a clean slate rather than inheriting the previous stack's verdict.
-  if (supervisionMode != null && supervisionMode != "auto") {
-    state.supervisionWorks = null
-    state.supervisionMisses = 0
-  }
 
   unschedule()
   if (logEnable) runIn(3600, logsOff)
@@ -261,11 +287,7 @@ void refresh() {
 
 void configure() {
   logger("debug", "configure()")
-
-  // Re-learn how this hub behaves. Run configure() after switching the hub between the legacy and the
-  // Z-Wave JS stack so the driver re-detects whether supervision reports reach it.
-  state.supervisionWorks = null
-  state.supervisionMisses = 0
+  cleanupState()
 
   List<hubitat.zwave.Command> cmds=[
     secureCmd(zwave.versionV3.versionGet())
@@ -283,7 +305,7 @@ void open() {
   // Remember what we asked for and when. Z-Wave JS echoes the commanded position straight back as if
   // the gate were already there; knowing what we commanded is what lets us tell that echo apart from
   // the gate actually having arrived.
-  state.commandedTarget = 99
+  state.commandedPosition = 99
   state.commandedAt = now()
 
   List<hubitat.zwave.Command> cmds=[
@@ -309,7 +331,7 @@ void close() {
   // Remember what we asked for and when. Z-Wave JS echoes the commanded position straight back as if
   // the gate were already there; knowing what we commanded is what lets us tell that echo apart from
   // the gate actually having arrived.
-  state.commandedTarget = 0
+  state.commandedPosition = 0
   state.commandedAt = now()
 
   List<hubitat.zwave.Command> cmds=[
@@ -331,6 +353,7 @@ void close() {
 
 void parse(String description) {
   logger("debug", "parse() - description: ${description.inspect()}")
+  cleanupState()
 
   // The Z-Wave JS stack hands drivers a JSON value-update document instead of a Z-Wave frame. Feeding
   // that to zwave.parse() throws whenever the device reports an unknown position, because Z-Wave JS
@@ -338,7 +361,6 @@ void parse(String description) {
   // exception used to kill the exact report that tells us the gate is moving, which is why the gate
   // jumped straight to "open"/"closed" and never showed "opening"/"closing". So we read it ourselves.
   if (description?.trim()?.startsWith("{")) {
-    state.stackIsJs = true
     parseZwaveJs(description)
     return
   }
@@ -420,28 +442,44 @@ void parseZwaveJs(String description) {
 //      movement instead.
 //   3. Anything else is a settled position.
 void handlePosition(Integer current, Integer target, Boolean partial, String source) {
-  if (current != null) { state.posCurrent = current }
-  if (target != null)  { state.posTarget  = target }
-
-  Integer cur = (state.posCurrent != null) ? (state.posCurrent as Integer) : null
-  Integer tgt = (state.posTarget  != null) ? (state.posTarget  as Integer) : null
-  Integer commanded = (state.commandedTarget != null) ? (state.commandedTarget as Integer) : null
-  Long since = now() - ((state.commandedAt ?: 0L) as Long)
-  Integer window = ((optimisticWindow ?: 3) as Integer) * 1000
-
-  if (cur == null) {
-    logger("debug", "handlePosition() - no current position known yet, nothing to report")
+  // No cache of the last seen position/target is kept. Every document that has mattered so far carries
+  // the current position, and every "position unknown" document has carried the target alongside it.
+  // Where a target is genuinely absent we fall back to what we commanded, which covers any movement we
+  // started ourselves. A document we cannot interpret is ignored rather than guessed at - the next
+  // report or the watchdog corrects it.
+  if (current == null) {
+    logger("debug", "handlePosition() - report carried no current position, ignoring")
     return
   }
+
+  Integer cur = current
+  Integer tgt = target
+  Integer commanded = (state.commandedPosition != null) ? (state.commandedPosition as Integer) : null
+  Long since = now() - ((state.commandedAt ?: 0L) as Long)
+  Integer window = ((optimisticWindow ?: 3) as Integer) * 1000
 
   String barrier, contact, why
 
   if (cur == POSITION_UNKNOWN) {
-    Integer t = (tgt != null && tgt != POSITION_UNKNOWN) ? tgt : commanded
-    if (t == null) { t = POSITION_UNKNOWN }
+    // Which source the target comes from decides whether a cache of the last seen target is needed.
+    // "from report" means no cache is required. "from our last command" still works for movement we
+    // started, but a gate opened by the remote has no command to fall back on - if that case shows up
+    // as "no target available", we need to start caching the last seen target.
+    Integer t
+    String tgtSource
+    if (tgt != null && tgt != POSITION_UNKNOWN) {
+      t = tgt;        tgtSource = "from report"
+    } else if (commanded != null) {
+      t = commanded;  tgtSource = "from our last command"
+    } else {
+      t = POSITION_UNKNOWN
+      tgtSource = "NO TARGET AVAILABLE - report carried none and we issued no command"
+      logger("warn", "Gate is moving but nothing tells us which way: no targetValue in the report and no command from us. " +
+                     "This is the case that would justify caching the last seen target.")
+    }
     barrier = getBarrierState((Short) POSITION_UNKNOWN, (Short) t)
     contact = getContactState((Short) POSITION_UNKNOWN, (Short) t)
-    why = "position unknown, target ${t} - gate is moving"
+    why = "position unknown, target ${t} (${tgtSource}) - gate is moving"
   } else if (partial && commanded != null && cur == commanded && since < window) {
     barrier = getBarrierState((Short) POSITION_UNKNOWN, (Short) commanded)
     contact = getContactState((Short) POSITION_UNKNOWN, (Short) commanded)
@@ -451,7 +489,7 @@ void handlePosition(Integer current, Integer target, Boolean partial, String sou
     contact = getContactState((Short) cur, (Short) cur)
     why = "settled at ${cur}"
     if (commanded != null && cur == commanded) {
-      state.commandedTarget = null
+      state.commandedPosition = null
     }
   }
 
@@ -557,7 +595,7 @@ void handleSupervisedCommand(hubitat.zwave.commands.switchmultilevelv4.SwitchMul
     // accepted - it is not the device saying it has arrived. Acting on it reports the gate open before
     // it has moved an inch. On that stack the position reports are richer and authoritative, so let
     // them do the work and ignore supervision for state entirely.
-    if (state.stackIsJs == true) {
+    if (isZwaveJs()) {
         logger("debug", "handleSupervisedCommand() - Z-Wave JS stack, state comes from position reports instead")
         return
     }
@@ -652,14 +690,6 @@ void zwaveEvent(hubitat.zwave.commands.supervisionv1.SupervisionGet cmd) {
 void zwaveEvent(hubitat.zwave.commands.supervisionv1.SupervisionReport cmd) {
   logger("trace", "zwaveEvent(SupervisionReport) - cmd: ${cmd.inspect()}")
 
-  // Reaching this handler at all means the hub is passing supervision through to the driver, which is
-  // the legacy (Z/IP) behaviour. Z-Wave JS consumes these internally and we never get here.
-  if (state.supervisionWorks != true) {
-    logger("info", "Inbound supervision reports are being delivered to the driver, keeping outbound supervision enabled.")
-  }
-  state.supervisionWorks = true
-  state.supervisionMisses = 0
-
   if (!supervisedPackets."${device.id}") { supervisedPackets."${device.id}" = [:] }
   switch (cmd.status as Integer) {
     case 0x00: // "No Support"
@@ -696,7 +726,8 @@ Boolean useSupervision() {
     case "always":
       return true
     default:
-      return (state.supervisionWorks != false)
+      // Z-Wave JS supervises on the driver's behalf, so encapsulating again there is pure duplication.
+      return !isZwaveJs()
   }
 }
 
@@ -748,16 +779,6 @@ void supervisionCheck(Integer num) {
     logger("warn", "No SupervisionReport for session ${sid}. NOT re-sending it - re-issuing a gate command would be unsafe.")
   }
   supervisedPackets["${device.id}"].clear()
-
-  state.supervisionMisses = (state.supervisionMisses ?: 0) + 1
-
-  // Two consecutive misses is a stack that is not giving us supervision, not a flaky packet.
-  if (state.supervisionMisses >= 2 && state.supervisionWorks != false) {
-    state.supervisionWorks = false
-    logger("warn", "Supervision reports are not reaching the driver (expected on Z-Wave JS). " +
-                   "Disabling outbound supervision, state will be tracked from device reports and polling. " +
-                   "Override with the 'Outbound supervision' preference.")
-  }
 
   // Recover the truth rather than guessing.
   pollState("supervision-miss")
