@@ -4,6 +4,17 @@
  *	Author: Bogusław Wójcik
  *
  *	CHANGELOG:
+ *  - v0.3.0 - 19.09.2026: Z-Wave JS fixes found by testing v0.2.0 on a live hub:
+ *      * parse() now reads the Z-Wave JS JSON value document directly. Passing it to zwave.parse() threw
+ *        a GroovyCastException whenever the gate reported an unknown position, because Z-Wave JS encodes
+ *        "unknown" as the string "null". That exception killed precisely the report that says the gate is
+ *        moving, which is why the state jumped straight to open/closed and never showed opening/closing.
+ *      * Z-Wave JS optimistically echoes the commanded position back within a second of the command. It is
+ *        now recognised as movement rather than arrival.
+ *      * Supervision "success" is manufactured by the Z-Wave JS stack on acceptance, not on completion, so
+ *        it no longer drives state on that stack.
+ *      * Fixed a crash decapsulating our own SupervisionGet under Z-Wave JS (HexUtils2.integerToHexString
+ *        on a null body), which also left supervision sessions uncleaned and triggered false timeouts.
  *  - v0.2.0 - 19.09.2026: Z-Wave JS compatibility. The driver now works on both the legacy (Z/IP) and the Z-Wave JS stack:
  *      * State is no longer solely dependent on inbound SupervisionReport, which Z-Wave JS consumes internally and never
  *        passes to drivers. A watchdog poll now guarantees a state update on either stack.
@@ -47,7 +58,7 @@
 
 import groovy.transform.Field
 
-@Field String VERSION = "0.2.0"
+@Field String VERSION = "0.3.0"
 
 metadata {
   definition (name: "Nice IBT4ZWAVE", namespace: "boguslaw-wojcik", author: "Bogusław Wójcik", importUrl: "https://github.com/boguslaw-wojcik/hubitat/blob/main/drivers/nice/nice_ibt4zwave_gate_actuator.groovy") {
@@ -72,6 +83,9 @@ metadata {
     input name: "watchdogDelay", type: "number", title: "Watchdog delay (seconds)", range: "1..30", defaultValue: 2
     input name: "travelConfirm", type: "bool", title: "Confirm final state after the gate finishes travelling", defaultValue: true
     input name: "travelTime", type: "number", title: "Expected travel time (seconds)", range: "5..300", defaultValue: 30
+    input name: "optimisticWindow", type: "number", title: "Z-Wave JS optimistic echo window (seconds)",
+      description: "How long after a command an echoed position is treated as movement rather than arrival.",
+      range: "1..15", defaultValue: 3
     input name: "useBasicReport", type: "bool", title: "Use BasicReport as a state source (diagnostic)", defaultValue: false
   }
 }
@@ -265,6 +279,13 @@ void configure() {
 
 void open() {
   logger("debug", "open()")
+
+  // Remember what we asked for and when. Z-Wave JS echoes the commanded position straight back as if
+  // the gate were already there; knowing what we commanded is what lets us tell that echo apart from
+  // the gate actually having arrived.
+  state.commandedTarget = 99
+  state.commandedAt = now()
+
   List<hubitat.zwave.Command> cmds=[
     supervisionEncap(zwave.switchMultilevelV4.switchMultilevelSet(value: 0x63, dimmingDuration: 0x00))
   ]
@@ -284,6 +305,13 @@ void open() {
 
 void close() {
   logger("debug", "close()")
+
+  // Remember what we asked for and when. Z-Wave JS echoes the commanded position straight back as if
+  // the gate were already there; knowing what we commanded is what lets us tell that echo apart from
+  // the gate actually having arrived.
+  state.commandedTarget = 0
+  state.commandedAt = now()
+
   List<hubitat.zwave.Command> cmds=[
     supervisionEncap(zwave.switchMultilevelV4.switchMultilevelSet(value: 0x00, dimmingDuration: 0x00))
   ]
@@ -303,13 +331,136 @@ void close() {
 
 void parse(String description) {
   logger("debug", "parse() - description: ${description.inspect()}")
-  hubitat.zwave.Command cmd = zwave.parse(description, CMD_CLASS_VERS)
+
+  // The Z-Wave JS stack hands drivers a JSON value-update document instead of a Z-Wave frame. Feeding
+  // that to zwave.parse() throws whenever the device reports an unknown position, because Z-Wave JS
+  // encodes "unknown" as the string "null" and the legacy parser tries to cast it to a Short. That
+  // exception used to kill the exact report that tells us the gate is moving, which is why the gate
+  // jumped straight to "open"/"closed" and never showed "opening"/"closing". So we read it ourselves.
+  if (description?.trim()?.startsWith("{")) {
+    state.stackIsJs = true
+    parseZwaveJs(description)
+    return
+  }
+
+  hubitat.zwave.Command cmd = null
+  try {
+    cmd = zwave.parse(description, CMD_CLASS_VERS)
+  } catch (e) {
+    logger("error", "parse() - zwave.parse() failed: ${e}. description: ${description?.inspect()}")
+    return
+  }
+
   if (cmd) {
     logger("debug", "parse() - parsed to cmd: ${cmd?.inspect()}")
     zwaveEvent(cmd)
   } else {
     logger("error", "parse() - non-parsed - description: ${description?.inspect()}")
   }
+}
+
+/* Z-Wave JS value documents */
+
+@Field static final Integer POSITION_UNKNOWN = 254
+
+// Z-Wave JS reports a position as a number, or as the string "null"/"unknown" when the device says it
+// does not know where it is. The gate reports exactly that while it is travelling, and it is the single
+// most useful signal this device produces.
+Integer normalisePosition(def v) {
+  if (v == null) { return null }
+  if (v instanceof Number) { return ((Number) v).intValue() }
+  String sv = v.toString()
+  if (sv == "null" || sv == "unknown") { return POSITION_UNKNOWN }
+  if (sv.isInteger()) { return sv.toInteger() }
+  return POSITION_UNKNOWN
+}
+
+// Reads a Z-Wave JS value-update document and funnels Multilevel Switch updates into handlePosition().
+void parseZwaveJs(String description) {
+  Map doc
+  try {
+    doc = (Map) new groovy.json.JsonSlurper().parseText(description)
+  } catch (e) {
+    logger("error", "parseZwaveJs() - could not read document: ${e}")
+    return
+  }
+
+  Integer cc = doc?.cc as Integer
+  if (cc != 0x26) {   // Multilevel Switch is the only class this device uses for position.
+    logger("debug", "parseZwaveJs() - ignoring command class ${cc}")
+    return
+  }
+
+  Integer current = null, target = null
+  Boolean sawDuration = false
+  ((List) (doc?.values ?: [])).each { Map v ->
+    switch (v?.propertyName) {
+      case "currentValue": current = normalisePosition(v.containsKey("newValue") ? v.newValue : v.value); break
+      case "targetValue":  target  = normalisePosition(v.containsKey("newValue") ? v.newValue : v.value); break
+      case "duration":     sawDuration = true; break
+    }
+  }
+
+  // A document carrying only currentValue is how Z-Wave JS delivers its optimistic post-command echo.
+  Boolean partial = (current != null && target == null && !sawDuration)
+
+  logger("debug", "parseZwaveJs() - currentValue: ${current}, targetValue: ${target}, duration present: ${sawDuration}, partial: ${partial}")
+  handlePosition(current, target, partial, "zwave-js")
+}
+
+// Single funnel for every position update, from either stack.
+//
+// Z-Wave JS sends partial updates, so we keep the last known current/target and merge into them.
+// Three cases produce a state:
+//   1. The device says its position is unknown. That is the gate physically moving, and the target
+//      tells us which way. This is the most trustworthy signal the device produces.
+//   2. Z-Wave JS optimistically echoes the commanded value back as the current position within a
+//      second of our Set, long before the gate has gone anywhere. Taking that at face value is what
+//      made the gate report "open" the instant it was told to open. We recognise it and report
+//      movement instead.
+//   3. Anything else is a settled position.
+void handlePosition(Integer current, Integer target, Boolean partial, String source) {
+  if (current != null) { state.posCurrent = current }
+  if (target != null)  { state.posTarget  = target }
+
+  Integer cur = (state.posCurrent != null) ? (state.posCurrent as Integer) : null
+  Integer tgt = (state.posTarget  != null) ? (state.posTarget  as Integer) : null
+  Integer commanded = (state.commandedTarget != null) ? (state.commandedTarget as Integer) : null
+  Long since = now() - ((state.commandedAt ?: 0L) as Long)
+  Integer window = ((optimisticWindow ?: 3) as Integer) * 1000
+
+  if (cur == null) {
+    logger("debug", "handlePosition() - no current position known yet, nothing to report")
+    return
+  }
+
+  String barrier, contact, why
+
+  if (cur == POSITION_UNKNOWN) {
+    Integer t = (tgt != null && tgt != POSITION_UNKNOWN) ? tgt : commanded
+    if (t == null) { t = POSITION_UNKNOWN }
+    barrier = getBarrierState((Short) POSITION_UNKNOWN, (Short) t)
+    contact = getContactState((Short) POSITION_UNKNOWN, (Short) t)
+    why = "position unknown, target ${t} - gate is moving"
+  } else if (partial && commanded != null && cur == commanded && since < window) {
+    barrier = getBarrierState((Short) POSITION_UNKNOWN, (Short) commanded)
+    contact = getContactState((Short) POSITION_UNKNOWN, (Short) commanded)
+    why = "optimistic echo ${since}ms after our command, treating as movement toward ${commanded}"
+  } else {
+    barrier = getBarrierState((Short) cur, (Short) cur)
+    contact = getContactState((Short) cur, (Short) cur)
+    why = "settled at ${cur}"
+    if (commanded != null && cur == commanded) {
+      state.commandedTarget = null
+    }
+  }
+
+  // getBarrierState() returns null for combinations it does not describe, never send that as an event.
+  if (barrier == null) { barrier = reportStopped ? "stopped" : "unknown" }
+  if (contact == null) { contact = (cur == 0) ? "closed" : "open" }
+
+  logger("debug", "handlePosition() - ${why} -> door: ${barrier}, contact: ${contact}")
+  reportState(barrier, contact, "${source}: ${why}")
 }
 
 // This is the primary, stack-agnostic source of truth. On the legacy stack it arrives unsolicited and in
@@ -320,7 +471,11 @@ void zwaveEvent(hubitat.zwave.commands.switchmultilevelv4.SwitchMultilevelReport
   logger("trace", "zwaveEvent(SwitchMultilevelReport) - cmd: ${cmd.inspect()}")
   logger("debug", "SwitchMultilevelReport - value: ${cmd.value}, targetValue: ${cmd.targetValue}, duration: ${cmd.duration}")
 
-  reportState(getBarrierState(cmd.value, cmd.targetValue), getContactState(cmd.value, cmd.targetValue), "SwitchMultilevelReport")
+  Integer cur = (cmd.value != null) ? (cmd.value as Integer) : null
+  Integer tgt = (cmd.targetValue != null) ? (cmd.targetValue as Integer) : null
+  Boolean partial = (tgt == null && cmd.duration == null)
+
+  handlePosition(cur, tgt, partial, "SwitchMultilevelReport")
 }
 
 void zwaveEvent(hubitat.zwave.commands.manufacturerspecificv2.ManufacturerSpecificReport cmd) {
@@ -345,6 +500,13 @@ void zwaveEvent(hubitat.zwave.commands.versionv3.VersionReport cmd) {
 
 void zwaveEvent(hubitat.zwave.Command cmd) {
   logger("warn", "zwaveEvent(Command) - Unspecified - cmd: ${cmd.inspect()}")
+}
+
+// The gate emits Access Control notifications (type 6) alongside its position reports. We do not drive
+// state from them, but they are logged quietly rather than as warnings while we work out whether any of
+// the events are worth acting on.
+void zwaveEvent(hubitat.zwave.commands.notificationv8.NotificationReport cmd) {
+  logger("debug", "zwaveEvent(NotificationReport) - type: ${cmd.notificationType}, event: ${cmd.event}, parameters: ${cmd.eventParameter}. No action.")
 }
 
 // BasicReport is historically ignored by this driver because the device reports properly via
@@ -390,6 +552,15 @@ void handleSupervisedCommand(hubitat.zwave.Command cmd, supervisionStatus) {
 
 void handleSupervisedCommand(hubitat.zwave.commands.switchmultilevelv4.SwitchMultilevelSet cmd, supervisionStatus) {
     logger("trace", "handleSupervisedCommand(SwitchMultilevelSet) - cmd: ${cmd.inspect()}, status: ${supervisionStatus}")
+
+    // On Z-Wave JS the "success" we get back is manufactured by the stack the moment the command is
+    // accepted - it is not the device saying it has arrived. Acting on it reports the gate open before
+    // it has moved an inch. On that stack the position reports are richer and authoritative, so let
+    // them do the work and ignore supervision for state entirely.
+    if (state.stackIsJs == true) {
+        logger("debug", "handleSupervisedCommand() - Z-Wave JS stack, state comes from position reports instead")
+        return
+    }
 
     switch (supervisionStatus) {
       case 0x01: // "Working"
@@ -497,12 +668,12 @@ void zwaveEvent(hubitat.zwave.commands.supervisionv1.SupervisionReport cmd) {
       break
     case 0x01: // "Working"
     case 0xFF: // "Success"
-      if (supervisedPackets["${device.id}"][cmd.sessionID] != null) {
-        supervisedCmd = supervisedPackets["${device.id}"][cmd.sessionID].encapsulatedCommand(CMD_CLASS_VERS)
-
-        handleSupervisedCommand(supervisedCmd, cmd.status)
-
+      Map session = supervisedPackets["${device.id}"][cmd.sessionID]
+      if (session != null) {
         supervisedPackets["${device.id}"].remove(cmd.sessionID)
+        handleSupervisedCommand(session.cmd, cmd.status)
+      } else {
+        logger("debug", "SupervisionReport for unknown session ${cmd.sessionID}, ignoring")
       }
       break
   }
@@ -537,7 +708,10 @@ String supervisionEncap(hubitat.zwave.Command cmd) {
     def cmdEncap = zwave.supervisionV1.supervisionGet(sessionID: sessId).encapsulate(cmd)
     logger("debug", "New supervised packet for session: ${sessId}")
     if (supervisedPackets["${device.id}"] == null) { supervisedPackets["${device.id}"] = [:] }
-    supervisedPackets["${device.id}"][sessId] = cmdEncap
+    // Keep the original command alongside the encapsulation. Z-Wave JS rewrites our SupervisionGet into
+    // a node.set_value call and hands back an envelope with an empty command body, so decapsulating it
+    // later throws. Holding on to what we actually sent removes the need to decapsulate at all.
+    supervisedPackets["${device.id}"][sessId] = [cmd: cmd, encap: cmdEncap]
     // Calculate supervisionCheck delay based on how many packets are cached.
     Integer packetsCount = supervisedPackets?."${device.id}"?.size()
     Integer delayTotal = (packetsCount * 500) + 2000
