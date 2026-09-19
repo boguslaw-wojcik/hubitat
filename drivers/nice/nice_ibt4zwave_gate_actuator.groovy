@@ -1,9 +1,18 @@
 /**
  *  Nice IBT4ZWAVE Z-Wave 700 Driver for Hubitat
- *  Date: 12.12.2024
+ *  Date: 19.09.2026
  *	Author: Bogusław Wójcik
  *
  *	CHANGELOG:
+ *  - v0.2.0 - 19.09.2026: Z-Wave JS compatibility. The driver now works on both the legacy (Z/IP) and the Z-Wave JS stack:
+ *      * State is no longer solely dependent on inbound SupervisionReport, which Z-Wave JS consumes internally and never
+ *        passes to drivers. A watchdog poll now guarantees a state update on either stack.
+ *      * Outbound supervision auto-disables itself when reports are not observed, instead of silently retrying.
+ *      * SAFETY: unacknowledged supervised packets are no longer blindly re-sent. On the Z-Wave JS stack the old
+ *        behaviour would re-issue the open/close command up to three times, because the acknowledgement never arrived.
+ *      * Movement is confirmed with a poll after the expected travel time, so the gate cannot get stuck showing
+ *        "opening"/"closing" if the final report is lost.
+ *      * BasicReport is now logged, and can optionally be used as a state source for diagnosis.
  *  - v0.1.2 - 19.12.2024: Bring back the explicit request for the state update after command for non-securely included devices.
  *  - v0.1.1 - 17.12.2024: Improved fingerprint and added state update based on supervision report to improve speed and reliability.
  *  - v0.1.0 - 12.12.2024: Initial working version.
@@ -38,7 +47,7 @@
 
 import groovy.transform.Field
 
-@Field String VERSION = "0.1.1"
+@Field String VERSION = "0.2.0"
 
 metadata {
   definition (name: "Nice IBT4ZWAVE", namespace: "boguslaw-wojcik", author: "Bogusław Wójcik", importUrl: "https://github.com/boguslaw-wojcik/hubitat/blob/main/drivers/nice/nice_ibt4zwave_gate_actuator.groovy") {
@@ -56,6 +65,14 @@ metadata {
     input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: true
     input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
     input name: "reportStopped", type: "bool", title: "Report stopped state instead of unknown", defaultValue: true
+    input name: "supervisionMode", type: "enum", title: "Outbound supervision",
+      description: "Auto: use supervision, but stop if the hub never delivers the reports (Z-Wave JS behaviour).",
+      options: ["auto": "Auto (recommended)", "always": "Always", "never": "Never"], defaultValue: "auto"
+    input name: "watchdogEnable", type: "bool", title: "Poll for state if no report arrives after a command", defaultValue: true
+    input name: "watchdogDelay", type: "number", title: "Watchdog delay (seconds)", range: "1..30", defaultValue: 2
+    input name: "travelConfirm", type: "bool", title: "Confirm final state after the gate finishes travelling", defaultValue: true
+    input name: "travelTime", type: "number", title: "Expected travel time (seconds)", range: "5..300", defaultValue: 30
+    input name: "useBasicReport", type: "bool", title: "Use BasicReport as a state source (diagnostic)", defaultValue: false
   }
 }
 
@@ -125,15 +142,79 @@ String getContactState(Short value, Short targetValue) {
 }
 
 // This is a helper function to report the state of the barrier and contact sensor.
-void reportState(String barrierState, String contactState) {
+// Any call here means we learned something authoritative, so the watchdog poll is no longer needed.
+void reportState(String barrierState, String contactState, String source = "report") {
+  state.lastStateSource = source
+  state.lastStateAt = now()
+  unschedule("stateWatchdog")
+
   sendEventWrapper(name:"door", value: barrierState, descriptionText:"Barrier is ${barrierState}")
   sendEventWrapper(name:"contact", value: contactState, descriptionText:"Contact is ${contactState}")
+
+  // While the gate is travelling, schedule a confirmation poll so a lost final report cannot leave
+  // the device stuck on "opening"/"closing" forever. Once it settles, drop the confirmation.
+  if (barrierState == "opening" || barrierState == "closing") {
+    if (travelConfirm != false) {
+      Integer t = (travelTime ?: 30) as Integer
+      logger("debug", "Gate is ${barrierState}, scheduling confirmation poll in ${t}s")
+      runIn(t, "confirmState")
+    }
+  } else {
+    unschedule("confirmState")
+  }
+}
+
+// True if we learned the state very recently. Used to avoid polling twice for the same command when
+// both the watchdog and the supervision timeout fire around the same moment.
+Boolean stateIsFresh(Integer withinMs = 3000) {
+  Long last = (state.lastStateAt ?: 0) as Long
+  return (last > 0 && (now() - last) < withinMs)
+}
+
+// Polls the device for its actual position. Used by the watchdog, the supervision timeout and the
+// travel confirmation. Keeping radio traffic low is a goal of this driver, so redundant polls are skipped.
+void pollState(String reason, Boolean force = false) {
+  if (!force && stateIsFresh()) {
+    logger("debug", "pollState() - skipped (${reason}), state already refreshed ${now() - (state.lastStateAt as Long)}ms ago")
+    return
+  }
+  logger("debug", "pollState() - reason: ${reason}")
+  sendCommands([secureCmd(zwave.switchMultilevelV4.switchMultilevelGet())])
+}
+
+// Fires when a command produced no state-bearing report in time. This is what keeps the driver
+// working on Z-Wave JS, where the SupervisionReport is consumed by the stack and never reaches us.
+void stateWatchdog() {
+  logger("warn", "No state report after command, polling the device. (stack: ${describeStack()})")
+  pollState("watchdog")
+}
+
+// Fires once the gate should have finished moving, to confirm it actually arrived.
+void confirmState() {
+  logger("debug", "confirmState() - travel time elapsed, confirming position")
+  pollState("travel-confirm", true)
+}
+
+// Schedules the watchdog poll after we issue a movement command.
+void scheduleWatchdog() {
+  if (watchdogEnable == false) { return }
+  Integer d = (watchdogDelay ?: 2) as Integer
+  runIn(d, "stateWatchdog")
+}
+
+// Human readable description of what we believe the hub's Z-Wave stack is doing, for logs.
+String describeStack() {
+  if (state.supervisionWorks == true) { return "supervision reports observed (legacy Z/IP behaviour)" }
+  if (state.supervisionWorks == false) { return "no supervision reports (Z-Wave JS behaviour)" }
+  return "unknown"
 }
 
 void installed() {
   log.info "installed(${VERSION})"
   sendEvent(name: "door", value: "unknown")
   sendEvent(name: "contact", value: "unknown")
+  state.supervisionWorks = null   // Unknown until we observe the hub's behaviour.
+  state.supervisionMisses = 0
   runIn(10, refresh)  // Get current device state after being installed.
 }
 
@@ -142,6 +223,16 @@ void updated() {
   log.warn "reporting stopped state is: ${reportStopped == true}"
   log.warn "debug logging is: ${logEnable == true}"
   log.warn "description logging is: ${txtEnable == true}"
+  log.warn "outbound supervision is: ${supervisionMode ?: 'auto'} (currently ${useSupervision() ? 'on' : 'off'}, ${describeStack()})"
+  log.warn "state watchdog is: ${watchdogEnable != false} (${watchdogDelay ?: 2}s), travel confirmation is: ${travelConfirm != false} (${travelTime ?: 30}s)"
+
+  // An explicit mode change clears the auto-detection, so switching stacks and flipping the preference
+  // back to "auto" starts from a clean slate rather than inheriting the previous stack's verdict.
+  if (supervisionMode != null && supervisionMode != "auto") {
+    state.supervisionWorks = null
+    state.supervisionMisses = 0
+  }
+
   unschedule()
   if (logEnable) runIn(3600, logsOff)
 }
@@ -156,6 +247,12 @@ void refresh() {
 
 void configure() {
   logger("debug", "configure()")
+
+  // Re-learn how this hub behaves. Run configure() after switching the hub between the legacy and the
+  // Z-Wave JS stack so the driver re-detects whether supervision reports reach it.
+  state.supervisionWorks = null
+  state.supervisionMisses = 0
+
   List<hubitat.zwave.Command> cmds=[
     secureCmd(zwave.versionV3.versionGet())
   ]
@@ -172,12 +269,17 @@ void open() {
     supervisionEncap(zwave.switchMultilevelV4.switchMultilevelSet(value: 0x63, dimmingDuration: 0x00))
   ]
 
-  // If the device does not support S2 security, request the state to be updated.
-  if (getDataValue("S2")?.toInteger()==null) {
-    cmds.add(secureCmd(zwave.switchMultilevelV4.switchMultilevelGet()))
-  }
-
   sendCommands(cmds, 200)
+
+  // Guarantee a state update regardless of the hub's Z-Wave stack.
+  //
+  // On the legacy stack the device answers the supervised Set with a "working" SupervisionReport within
+  // milliseconds, we report "opening" from it and the watchdog is cancelled before it ever fires.
+  //
+  // On Z-Wave JS the stack consumes the SupervisionReport itself, so that fast path never happens. The
+  // watchdog then polls the device and we learn the state from a SwitchMultilevelReport instead. Costs
+  // one extra packet, only on the stack that needs it.
+  scheduleWatchdog()
 }
 
 void close() {
@@ -186,29 +288,39 @@ void close() {
     supervisionEncap(zwave.switchMultilevelV4.switchMultilevelSet(value: 0x00, dimmingDuration: 0x00))
   ]
 
-  // If the device does not support S2 security, request the state to be updated.
-  if (getDataValue("S2")?.toInteger()==null) {
-    cmds.add(secureCmd(zwave.switchMultilevelV4.switchMultilevelGet()))
-  }
-
   sendCommands(cmds, 200)
+
+  // Guarantee a state update regardless of the hub's Z-Wave stack.
+  //
+  // On the legacy stack the device answers the supervised Set with a "working" SupervisionReport within
+  // milliseconds, we report "closing" from it and the watchdog is cancelled before it ever fires.
+  //
+  // On Z-Wave JS the stack consumes the SupervisionReport itself, so that fast path never happens. The
+  // watchdog then polls the device and we learn the state from a SwitchMultilevelReport instead. Costs
+  // one extra packet, only on the stack that needs it.
+  scheduleWatchdog()
 }
 
 void parse(String description) {
   logger("debug", "parse() - description: ${description.inspect()}")
   hubitat.zwave.Command cmd = zwave.parse(description, CMD_CLASS_VERS)
   if (cmd) {
-    logger("debug", "parse() - parsed to cmd: ${cmd?.inspect()} with result: ${result?.inspect()}")
+    logger("debug", "parse() - parsed to cmd: ${cmd?.inspect()}")
     zwaveEvent(cmd)
   } else {
     logger("error", "parse() - non-parsed - description: ${description?.inspect()}")
   }
 }
 
+// This is the primary, stack-agnostic source of truth. On the legacy stack it arrives unsolicited and in
+// response to our polls. On Z-Wave JS the platform also synthesises it from the supervision response it
+// consumed on our behalf (added in platform 2.4.3.155, "produce missing reports based on supervision
+// response, per Z-Wave specs"), so this handler carries the load there.
 void zwaveEvent(hubitat.zwave.commands.switchmultilevelv4.SwitchMultilevelReport cmd){
   logger("trace", "zwaveEvent(SwitchMultilevelReport) - cmd: ${cmd.inspect()}")
+  logger("debug", "SwitchMultilevelReport - value: ${cmd.value}, targetValue: ${cmd.targetValue}, duration: ${cmd.duration}")
 
-  reportState(getBarrierState(cmd.value, cmd.targetValue), getContactState(cmd.value, cmd.targetValue))
+  reportState(getBarrierState(cmd.value, cmd.targetValue), getContactState(cmd.value, cmd.targetValue), "SwitchMultilevelReport")
 }
 
 void zwaveEvent(hubitat.zwave.commands.manufacturerspecificv2.ManufacturerSpecificReport cmd) {
@@ -235,8 +347,20 @@ void zwaveEvent(hubitat.zwave.Command cmd) {
   logger("warn", "zwaveEvent(Command) - Unspecified - cmd: ${cmd.inspect()}")
 }
 
+// BasicReport is historically ignored by this driver because the device reports properly via
+// SwitchMultilevel. It is logged so we can tell, during Z-Wave JS testing, whether the platform is
+// mapping the gate's state onto Basic instead. Enable "useBasicReport" only if the logs show that
+// Basic is the only thing arriving.
 void zwaveEvent(hubitat.zwave.commands.basicv2.BasicReport cmd){
-  logger("trace", "zwaveEvent(BasicReport) - cmd: ${cmd.inspect()}. No action.")
+  logger("trace", "zwaveEvent(BasicReport) - cmd: ${cmd.inspect()}")
+
+  if (useBasicReport != true) {
+    logger("debug", "BasicReport - value: ${cmd.value}, targetValue: ${cmd.targetValue}, duration: ${cmd.duration}. No action (useBasicReport is off).")
+    return
+  }
+
+  logger("debug", "BasicReport - value: ${cmd.value}, targetValue: ${cmd.targetValue}. Mapping to barrier state.")
+  reportState(getBarrierState(cmd.value, cmd.targetValue), getContactState(cmd.value, cmd.targetValue), "BasicReport")
 }
 
 void zwaveEvent(hubitat.zwave.commands.switchmultilevelv4.SwitchMultilevelSet cmd){
@@ -272,13 +396,13 @@ void handleSupervisedCommand(hubitat.zwave.commands.switchmultilevelv4.SwitchMul
         // If the device responded with a working status upon receiving a command to open or close the gate,
         // we can assume the command was accepted and is undergoing, so we can report the state as opening or closing.
         // There is no need to request a report from the device.
-        reportState(getBarrierState((Short) 0xFE, cmd.value), getContactState((Short) 0xFE, cmd.value))
+        reportState(getBarrierState((Short) 0xFE, cmd.value), getContactState((Short) 0xFE, cmd.value), "SupervisionReport(working)")
         break
       case 0xFF: // "Success"
         // If the device responded with a success status upon receiving a command to open or close the gate,
         // we can assume that the gate was open or closed already.
         // There is no need to request a report from the device.
-        reportState(getBarrierState(cmd.value, cmd.value), getContactState(cmd.value, cmd.value))
+        reportState(getBarrierState(cmd.value, cmd.value), getContactState(cmd.value, cmd.value), "SupervisionReport(success)")
         break
     }
 }
@@ -356,6 +480,15 @@ void zwaveEvent(hubitat.zwave.commands.supervisionv1.SupervisionGet cmd) {
 
 void zwaveEvent(hubitat.zwave.commands.supervisionv1.SupervisionReport cmd) {
   logger("trace", "zwaveEvent(SupervisionReport) - cmd: ${cmd.inspect()}")
+
+  // Reaching this handler at all means the hub is passing supervision through to the driver, which is
+  // the legacy (Z/IP) behaviour. Z-Wave JS consumes these internally and we never get here.
+  if (state.supervisionWorks != true) {
+    logger("info", "Inbound supervision reports are being delivered to the driver, keeping outbound supervision enabled.")
+  }
+  state.supervisionWorks = true
+  state.supervisionMisses = 0
+
   if (!supervisedPackets."${device.id}") { supervisedPackets."${device.id}" = [:] }
   switch (cmd.status as Integer) {
     case 0x00: // "No Support"
@@ -378,9 +511,27 @@ void zwaveEvent(hubitat.zwave.commands.supervisionv1.SupervisionReport cmd) {
 @Field static Map<String, Map<Short, String>> supervisedPackets = new java.util.concurrent.ConcurrentHashMap()
 @Field static Map<String, Short> sessionIDs = new java.util.concurrent.ConcurrentHashMap()
 
+// Decides whether to wrap outbound commands in SupervisionGet.
+//
+// "auto" starts optimistic and switches itself off once the hub has repeatedly failed to deliver the
+// reports back to us, which is what the Z-Wave JS stack does by design (it handles supervision itself).
+// This keeps one driver working on both stacks without needing to ask the platform which one is active.
+Boolean useSupervision() {
+  if (getDataValue("S2")?.toInteger() == null) { return false }
+
+  switch (supervisionMode ?: "auto") {
+    case "never":
+      return false
+    case "always":
+      return true
+    default:
+      return (state.supervisionWorks != false)
+  }
+}
+
 String supervisionEncap(hubitat.zwave.Command cmd) {
   logger("trace", "supervisionEncap(): ${cmd}")
-  if (getDataValue("S2")?.toInteger() != null) {
+  if (useSupervision()) {
     // Encapsulate with SupervisionGet command.
     Short sessId = getSessionId()
     def cmdEncap = zwave.supervisionV1.supervisionGet(sessionID: sessId).encapsulate(cmd)
@@ -407,24 +558,35 @@ Short getSessionId() {
   return sessId
 }
 
+// Runs when supervised packets have gone unacknowledged.
+//
+// The original implementation re-sent the packet up to three times. That is correct for a dimmer, but
+// it is NOT safe here: on Z-Wave JS the acknowledgement never comes back to the driver, so every gate
+// command would have been re-issued three times over. For a barrier that is unacceptable, so we never
+// re-send. We drop the packet, note the miss and poll for the real state instead.
 void supervisionCheck(Integer num) {
-  Integer packetsCount = supervisedPackets?."${device.id}"?.size()
+  Integer packetsCount = supervisedPackets?."${device.id}"?.size() ?: 0
   logger("debug", "Supervision Check #${num} - Packet Count: ${packetsCount}")
-  if (packetsCount > 0 ) {
-    List<String> cmds = []
-    supervisedPackets["${device.id}"].each { sid, cmd ->
-      logger("warn",  "Re-Sending Supervised Session: ${sid} (Retry #${num})")
-      cmds << secureCmd(cmd)
-    }
-    sendCommands(cmds)
-    if (num >= 3) { //Clear after this many attempts
-      logger("warn",  "Supervision MAX RETIES (${num}) Reached")
-      supervisedPackets["${device.id}"].clear()
-    } else { //Otherwise keep trying
-      Integer delayTotal = (packetsCount * 500) + 2000
-      runInMillis(delayTotal, supervisionCheck, [data:num+1])
-    }
+
+  if (packetsCount == 0) { return }
+
+  supervisedPackets["${device.id}"].each { sid, cmd ->
+    logger("warn", "No SupervisionReport for session ${sid}. NOT re-sending it - re-issuing a gate command would be unsafe.")
   }
+  supervisedPackets["${device.id}"].clear()
+
+  state.supervisionMisses = (state.supervisionMisses ?: 0) + 1
+
+  // Two consecutive misses is a stack that is not giving us supervision, not a flaky packet.
+  if (state.supervisionMisses >= 2 && state.supervisionWorks != false) {
+    state.supervisionWorks = false
+    logger("warn", "Supervision reports are not reaching the driver (expected on Z-Wave JS). " +
+                   "Disabling outbound supervision, state will be tracked from device reports and polling. " +
+                   "Override with the 'Outbound supervision' preference.")
+  }
+
+  // Recover the truth rather than guessing.
+  pollState("supervision-miss")
 }
 
 /* Logging */
