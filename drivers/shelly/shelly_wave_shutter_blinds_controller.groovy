@@ -92,7 +92,7 @@ metadata {
         0x72: 2, // COMMAND_CLASS_MANUFACTURER_SPECIFIC_V2
         0x70: 4, // COMMAND_CLASS_CONFIGURATION_V4
         0x5E: 2, // COMMAND_CLASS_ZWAVEPLUS_INFO_V2
-        0x32: 6, // COMMAND_CLASS_METER_V6
+        0x32: 5, // COMMAND_CLASS_METER_V5 (v6 report objects fail to construct under Z-Wave JS: MeterReport.setMeterType(Integer))
         0x7A: 7, // COMMAND_CLASS_FIRMWARE_UPDATE_MD_V7
         0x98: 1, // COMMAND_CLASS_SECURITY_V1
         0x9F: 1, // COMMAND_CLASS_SECURITY_2_V1
@@ -337,6 +337,8 @@ void updated() {
 
     checkLogLevel()
 
+    logWarn "Z-Wave stack detected: ${describeStack()}, outbound supervision is ${useSupervision() ? 'on' : 'off'} (automatic: on for S2 devices on the legacy stack only)"
+
     sendCommands(getConfigureCmds())
 }
 
@@ -424,6 +426,16 @@ void calibrate() {
 void zwaveEvent(hubitat.zwave.commands.switchmultilevelv4.SwitchMultilevelReport cmd, ep = 0) {
     logTrace "${cmd}"
 
+    // Z-Wave JS optimistically echoes the value we just commanded back as the current value, within
+    // a few hundred milliseconds of a Set and before the shutter has moved. The echo is a partial
+    // document carrying only currentValue, so it parses with a null targetValue and duration. The
+    // device reports v4 and always sends both, so this shape is exclusively the echo; taking it at
+    // face value publishes a false position and a wrong direction. The real report follows shortly.
+    if (cmd.targetValue == null && cmd.duration == null) {
+        logDebug "Ignoring optimistic value echo from Z-Wave JS: ${cmd}"
+        return
+    }
+
     // We handle this way an unknown position reported as 254 which can happen if blinds are not calibrated.
     Short position = cmd.value
     if (position > 99) {
@@ -435,7 +447,15 @@ void zwaveEvent(hubitat.zwave.commands.switchmultilevelv4.SwitchMultilevelReport
     updateWindowShade(cmd.value, cmd.targetValue)
 }
 
+void zwaveEvent(hubitat.zwave.commands.meterv5.MeterReport cmd, ep = 0) {
+    handleMeterReport(cmd, ep)
+}
+
 void zwaveEvent(hubitat.zwave.commands.meterv6.MeterReport cmd, ep = 0) {
+    handleMeterReport(cmd, ep)
+}
+
+void handleMeterReport(cmd, ep = 0) {
     logTrace "${cmd}"
     switch (cmd.scale) {
         case 0x00:
@@ -806,7 +826,7 @@ String multiChannelCmd(hubitat.zwave.Command cmd, ep) {
 String superviseCmd(hubitat.zwave.Command cmd, ep = 0) {
     logTrace "superviseCmd: ${cmd} (ep ${ep})"
 
-    if (supportsSupervision()) {
+    if (useSupervision()) {
         //Encapsulated command with SupervisionGet.
         Short sID = getSessionId()
         def cmdEncap = zwave.supervisionV1.supervisionGet(sessionID: sID, statusUpdates: true).encapsulate(cmd)
@@ -899,6 +919,30 @@ Boolean supportsSupervision() {
     }
 
     return true
+}
+
+// Whether this driver should wrap outbound commands in SupervisionGet itself. Only on the legacy
+// stack: Z-Wave JS rewrites the encapsulation into its own supervised node.set_value, retries on
+// its own, and answers with a synthesised SUCCESS on acceptance rather than the device's WORKING,
+// so doing it here as well only adds a second retry path and dead session bookkeeping.
+Boolean useSupervision() {
+    return supportsSupervision() && !isZwaveJs()
+}
+
+// zwaveSecureEncap() only formats a command for whichever stack is active: a JSON document on
+// Z-Wave JS, a hex frame on legacy. Nothing is sent and a Get allocates no supervision session, so
+// this is a pure local check (1-2 ms measured) and needs no cached flag.
+Boolean isZwaveJs() {
+    try {
+        return zwaveSecureEncap(zwave.versionV3.versionGet().format())?.trim()?.startsWith("{")
+    } catch (e) {
+        logWarn "isZwaveJs() - could not determine the Z-Wave stack (${e}), assuming legacy"
+        return false
+    }
+}
+
+String describeStack() {
+    return isZwaveJs() ? "Z-Wave JS" : "legacy Z/IP"
 }
 
 void handleSupervisionResult(hubitat.zwave.Command cmd, ep = 0, result, position) {
