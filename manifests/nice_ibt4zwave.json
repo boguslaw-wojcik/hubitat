@@ -1,7 +1,7 @@
 {
   "packageName": "Nice IBT4ZWAVE",
   "author": "Boguslaw Wojcik (@bogus.wojcik)",
-  "minimumHEVersion": "2.3.5",
+  "minimumHEVersion": "2.5.1",
   "dateReleased": "2026-09-19",
   "documentationLink": "https://community.hubitat.com/t/release-nice-ibt4zwave-community-driver/146932",
   "communityLink": "https://community.hubitat.com/t/release-nice-ibt4zwave-community-driver/146932",
