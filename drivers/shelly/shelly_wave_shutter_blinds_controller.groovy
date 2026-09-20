@@ -4,6 +4,7 @@
  *	Author: Bogusław Wójcik
  *
  *	CHANGELOG:
+ *  - v0.2.0 - 20.09.2026: Support for Z-Wave JS, for the breaking configuration changes introduced in firmware 14.x, and for new parameters.
  * 	- v0.1.2 - 25.06.2025: Minor safeguard against logging level set by different custom driver.
  *  - v0.1.1 - 19.06.2025: Minor fix when reading enumerated configuration params.
  *  - v0.1.0 - 03.05.2025: Initial working version.
@@ -23,7 +24,8 @@
  *  - lifetime energy consumption is shown.
  *
  *  NOTES:
- *  - The driver has been tested on Shelly Wave Shutter from EU distribution module with firmware version 12.23 and securely paired with Hubitat.
+ *  - The driver has been tested on Shelly Wave Shutter from EU distribution module with firmware version 14.02 and securely paired with Hubitat.
+ *  - Firmware 12.x numbers several configuration parameters differently; the driver translates them, but that path is no longer covered by testing.
  *
  *  Copyright 2025 Bogusław Wójcik
  *
@@ -40,7 +42,7 @@
 
 import groovy.transform.Field
 
-@Field static final String VERSION = "0.1.1"
+@Field static final String VERSION = "0.2.0"
 
 metadata {
     definition(
@@ -58,6 +60,7 @@ metadata {
         capability "WindowShade"
 
         command "calibrate"
+        command "reboot"
 
         fingerprint mfr: "0460", prod: "0003", deviceId: "0082", inClusters: "0x5E,0x9F,0x55,0x6C", secureInClusters: "0x26,0x71,0x85,0x59,0x8E,0x5A,0x87,0x60,0x73,0x86,0x22,0x70,0x7A,0x72,0x32", controllerType: "ZWV", deviceJoinName: "Shelly Wave Shutter"
     }
@@ -92,7 +95,7 @@ metadata {
         0x72: 2, // COMMAND_CLASS_MANUFACTURER_SPECIFIC_V2
         0x70: 4, // COMMAND_CLASS_CONFIGURATION_V4
         0x5E: 2, // COMMAND_CLASS_ZWAVEPLUS_INFO_V2
-        0x32: 6, // COMMAND_CLASS_METER_V6
+        0x32: 5, // COMMAND_CLASS_METER_V5 (v6 report objects fail to construct under Z-Wave JS: MeterReport.setMeterType(Integer))
         0x7A: 7, // COMMAND_CLASS_FIRMWARE_UPDATE_MD_V7
         0x98: 1, // COMMAND_CLASS_SECURITY_V1
         0x9F: 1, // COMMAND_CLASS_SECURITY_2_V1
@@ -102,9 +105,9 @@ metadata {
 @Field static final List<Map> configParams = [
         [
                 input : [
-                        name        : "configParam1",
+                        name        : "configParam5",
                         type        : "enum",
-                        title       : "Parameter No. 1 - Push-button (momentary) / bistable (toggle switch) selection",
+                        title       : "Parameter No. 5 - Push-button (momentary) / bistable (toggle switch) selection",
                         description : "With this parameter, you can select between the switch type: push-button (momentary) or on/off toggle switch connected to SW1 and SW2 inputs.<br><b>NOTE:</b> When set = 2, 1x click on SW1 up - 1x click on SW1 stop - 1x click down",
                         defaultValue: 0,
                         required    : false,
@@ -114,15 +117,15 @@ metadata {
                                 2: "single, momentary switch (the switch should be connected to SW1 terminal)"
                         ],
                 ],
-                num   : 1,
+                num   : 5,
                 size  : 1,
                 hidden: false,
         ],
         [
                 input : [
-                        name        : "configParam3",
+                        name        : "configParam6",
                         type        : "enum",
-                        title       : "Parameter No. 3 – Inputs orientation",
+                        title       : "Parameter No. 6 – Inputs orientation",
                         description : "This parameter allows to reverse the operation of switches connected to SW1 and SW2 inputs without changing the wiring.",
                         defaultValue: 0,
                         required    : false,
@@ -131,15 +134,49 @@ metadata {
                                 1: "reversed (SW1 - O2, I2 - O1)",
                         ],
                 ],
-                num   : 3,
+                num   : 6,
                 size  : 1,
                 hidden: false,
         ],
         [
                 input : [
-                        name        : "configParam5",
+                        name        : "configParam7",
                         type        : "enum",
-                        title       : "Parameter No. 5 – Output orientation",
+                        title       : "Parameter No. 7 - SW (SW1) detach mode",
+                        description : "In this mode the input SW (SW1) is separated/not changing the state of the output.",
+                        defaultValue: 0,
+                        required    : false,
+                        options     : [
+                                0: "normal mode",
+                                1: "detached mode",
+                        ],
+                ],
+                num   : 7,
+                size  : 1,
+                hidden: false,
+        ],
+        [
+                input : [
+                        name        : "configParam8",
+                        type        : "enum",
+                        title       : "Parameter No. 8 - SW2 detach mode",
+                        description : "In this mode the input SW 2 is separated/not changing the state of the output.",
+                        defaultValue: 0,
+                        required    : false,
+                        options     : [
+                                0: "normal mode",
+                                1: "detached mode",
+                        ],
+                ],
+                num   : 8,
+                size  : 1,
+                hidden: false,
+        ],
+        [
+                input : [
+                        name        : "configParam16",
+                        type        : "enum",
+                        title       : "Parameter No. 16 – Output orientation",
                         description : "This parameter allows to reverse the operation of O1 and O2 without changing the wiring (in case of invalid motor connection) to ensure proper operation.",
                         defaultValue: 0,
                         required    : false,
@@ -148,21 +185,35 @@ metadata {
                                 1: "reversed (O1 - DOWN, O2 - UP)",
                         ],
                 ],
-                num   : 5,
+                num   : 16,
                 size  : 1,
                 hidden: false,
         ],
         [
                 input : [
-                        name        : "configParam40",
+                        name        : "configParam36",
                         type        : "number",
-                        title       : "Parameter No. 40 - Power Consumption Reporting",
+                        title       : "Parameter No. 36 - Power Consumption Reporting",
                         description : "Choose by how much the power (W) consumption needs to increase or decrease to be reported. Values correspond to percentages, so if 50 is set (by default), the Device will report any power consumption changes of 50 % or more, compared to the last reading.<br>&bull; 0 - Power consumption reporting disabled<br>&bull; 1 % - 100 % Power consumption reporting enabled. New value is reported only when the power consumption in real time changes by more than the percentage value set in this parameter, compared to the previous power consumption reading, starting at 1 % (the lowest value possible).<br><b>NOTE:</b> Power consumption needs to increase or decrease by at least 1 Watt to be reported, REGARDLESS of the percentage set in this parameter.",
                         defaultValue: 50,
                         required    : false,
                         range       : "0..100"
                 ],
-                num   : 40,
+                num   : 36,
+                size  : 1,
+                hidden: false,
+        ],
+        [
+                input : [
+                        name        : "configParam39",
+                        type        : "number",
+                        title       : "Parameter No. 39 - Minimum time between reports (O) O1",
+                        description : "This parameter determines the minimum time that must elapse before a new power report on O (O1) is sent to the gateway.<br>&bull; 0 - reports are disabled<br>&bull; 1-120 (1-120s) - report interval<br><b>NOTE:</b> This Parameter is in relation to Parameter No. 36.<br><b>NOTE:</b> Setting the value to less than 30s can cause the Z-Wave network congestion state (slow Device response and decreased network stability).<br><b>NOTE:</b> Wave Shutter measures the power consumption on O1 and O2, but as only O1 or only O2 can be active at a time (never both at the same time), the Wave Shutter reports only one value to the gateway, i.e. the sum of the power consumption of O1 and O2, the same for the current.",
+                        defaultValue: 30,
+                        required    : false,
+                        range       : "0..120"
+                ],
+                num   : 39,
                 size  : 1,
                 hidden: false,
         ],
@@ -171,12 +222,13 @@ metadata {
                         name        : "configParam71",
                         type        : "enum",
                         title       : "Parameter No. 71 - Operating modes",
-                        description : "Choose between the two operating modes. In shutter mode, you can select up/down/stop. In venetian mode, an additional widget/endpoint is displayed in the UI interface, which you can use to control the tilt position of the slats.",
+                        description : "Choose between the three operating modes. In shutter mode, you can select up/down/stop. In venetian mode, an additional widget/endpoint is displayed in the UI interface, which you can use to control the tilt position of the slats. In manual time set mode, the movement times are taken from the device parameters instead of from calibration.",
                         defaultValue: 0,
                         required    : false,
                         options     : [
                                 0: "Shutter mode",
                                 1: "Venetian mode with (up/down and slats rotation)",
+                                2: "Manual time set mode",
                         ],
                 ],
                 num   : 71,
@@ -188,10 +240,10 @@ metadata {
                         name        : "configParam72",
                         type        : "number",
                         title       : "Parameter No. 72 - Venetian blind slats turning time",
-                        description : "Set the time required for the slats to make a full turn (180 degrees).<br>NOTE: Make sure that working mode is set to venetian (Par. No. 71 =1)<br>&bull; 0 - turning time disabled<br>&bull; 1 - 32000 = 0.01 seconds – 320 seconds<br><b>NOTE:</b> If the set time is too long and a full turn was already performed, the device will start moving up or down for the remaining time. In this case, shorten the turning time.",
+                        description : "Set the time required for the slats to make a full turn (180 degrees).<br>NOTE: Make sure that working mode is set to venetian (Par. No. 71 =1)<br>&bull; 0 - turning time disabled<br>&bull; 1 - 65535 = 0.01 seconds – 655.35 seconds<br><b>NOTE:</b> If the set time is too long and a full turn was already performed, the device will start moving up or down for the remaining time. In this case, shorten the turning time.",
                         defaultValue: 150,
                         required    : false,
-                        range       : "0..32000"
+                        range       : "0..65535"
                 ],
                 num   : 72,
                 size  : 2,
@@ -249,10 +301,24 @@ metadata {
         ],
         [
                 input : [
+                        name        : "configParam79",
+                        type        : "number",
+                        title       : "Parameter No. 79 – Power consumption max delay time",
+                        description : "Define the maximum time before the power consumption of the motor is read from the Device, after one of the relays is switched on. If there is no power consumption during the set time (motor is not connected, damaged or requires longer time to start, motor is at the end position), the relay will switch off. This time is defined by entering it manually.<br>&bull; 0 = time is set automatically<br>&bull; 3 - 50 = 0.3seconds – 5seconds (100ms resolution)",
+                        defaultValue: 30,
+                        required    : false,
+                        range       : "0..50"
+                ],
+                num   : 79,
+                size  : 1,
+                hidden: false,
+        ],
+        [
+                input : [
                         name        : "configParam80",
                         type        : "number",
                         title       : "Parameter No. 80 – Motor stop delay after limit switch detection",
-                        description : "This parameter defines the delay time for the motor to turn off, after reaching the limit switch.<br>&bull; Default value 10 = (1s)<br>&bull; 0-127 (0-12.7s) - time",
+                        description : "This parameter defines the delay time for the motor to turn off, after reaching the limit switch.<br>&bull; Default value 10 = (1s)<br>&bull; 0-255 (0-25.5s) - time",
                         defaultValue: 10,
                         required    : false,
                         range       : "0..255"
@@ -263,32 +329,56 @@ metadata {
         ],
         [
                 input : [
-                        name        : "configParam85",
+                        name        : "configParam81",
                         type        : "number",
-                        title       : "Parameter No. 85 – Power consumption max delay time",
-                        description : "Define the maximum time before the power consumption of the motor is read from the Device, after one of the relays is switched on. If there is no power consumption during the set time (motor is not connected, damaged or requires longer time to start, motor is at the end position), the relay will switch off. This time is defined by entering it manually.<br>&bull; 0 = time is set automatically<br>&bull; 3 - 50 = 0.3seconds – 5seconds (100ms resolution)",
-                        defaultValue: 30,
+                        title       : "Parameter No. 81 - Max. Motor moving time",
+                        description : "When the shutter is not calibrated (or the motor is not equipped with a limit switch), this parameter defines the movement time of the motor.<br>&bull; Default value: 120 (120s)<br>&bull; value = 1 - 32000 (1s - 32000s)<br>&bull; 32001 = unlimited<br><b>NOTE:</b> Firmware 12.x counts this parameter in 10 ms steps instead of seconds. The driver converts the value automatically, but that firmware cannot go beyond 320 seconds.",
+                        defaultValue: 120,
                         required    : false,
-                        range       : "0..50"
+                        range       : "1..32001"
                 ],
-                num   : 85,
-                size  : 1,
+                num   : 81,
+                size  : 2,
                 hidden: false,
         ],
         [
                 input : [
-                        name        : "configParam91",
+                        name        : "configParam105",
                         type        : "number",
-                        title       : "Parameter No. 91 - Max. Motor moving time",
-                        description : "When the shutter is not calibrated (or the motor is not equipped with a limit switch), this parameter defines the movement time of the motor.<br>&bull; Default value: 12000 (120s)<br>&bull; value = 1 - 32000 (10ms - 320s)",
-                        defaultValue: 12000,
+                        title       : "Parameter No. 105 - LED Signalisation intensity",
+                        description : "This parameter determines the intensity of the LED on the Device. Some Devices have RGB LEDs and some have Blue/Red LEDs, but all are dimmable.<br>&bull; 0-100 (0-100%, every 1%)",
+                        defaultValue: 100,
                         required    : false,
-                        range       : "1..32000"
+                        range       : "0..100"
                 ],
-                num   : 91,
-                size  : 2,
+                num   : 105,
+                size  : 1,
                 hidden: false,
         ],
+]
+
+// Parameter that reboots the device, exposed as an action instead of a preference so that it only
+// fires when asked for. Firmware 14.x and later only.
+@Field static final Integer REBOOT_PARAM = 117
+
+// Firmware 14.x renumbered part of the configuration parameter set. The specification above uses the
+// firmware 14 numbering, and this map translates it to the numbering used by firmware 12.x devices.
+// Parameters omitted here kept the same number across both firmware generations.
+@Field static final Map<Integer, Integer> legacyParamNumbers = [
+        5 : 1,  // push-button / bistable selection
+        6 : 3,  // inputs orientation
+        16: 5,  // output orientation
+        36: 40, // power consumption reporting
+        79: 85, // power consumption max delay time
+        81: 91, // max. motor moving time
+]
+
+// Firmware 14.x also changed the unit of some parameters. The specification above uses the firmware
+// 14 units, and values are converted for firmware 12.x devices. Keyed by the firmware 14 number,
+// where "factor" is how many device steps make up one unit of the specification and "max" is the
+// highest value firmware 12.x accepts, in its own steps.
+@Field static final Map<Integer, Map> legacyValueScales = [
+        81: [factor: 100, max: 32000], // seconds on 14.x, 10 ms steps on 12.x
 ]
 
 //endregion Specification
@@ -303,13 +393,23 @@ void installed() {
 void configure() {
     logWarn "performing configuration..."
 
-    List<hubitat.zwave.Command> cmds = [
+    List<String> cmds = [
             versionGetCmd(),
             mfgSpecificGetCmd(),
             deviceSpecificGetCmd(),
     ]
 
-    // Refresh all parameters.
+    // Parameter numbering depends on the firmware version, so parameters are refreshed separately,
+    // once the version report had a chance to arrive.
+    runIn(5, refreshParams)
+
+    sendCommands(cmds)
+}
+
+// Refreshes all configuration parameters.
+void refreshParams() {
+    List<String> cmds = []
+
     configParams.each { param ->
         cmds += configGetCmd(param)
     }
@@ -336,6 +436,8 @@ void updated() {
     logWarn "performing preferences update..."
 
     checkLogLevel()
+
+    logWarn "Z-Wave stack detected: ${describeStack()}, outbound supervision is ${useSupervision() ? 'on' : 'off'} (automatic: on for S2 devices on the legacy stack only)"
 
     sendCommands(getConfigureCmds())
 }
@@ -417,12 +519,34 @@ void calibrate() {
     sendCommands(configSetGetCmd(getParam(78), 1))
 }
 
+// Restarts the device through parameter No. 117, which firmware 14.x resets to 0 on its own once
+// the device comes back. Firmware 12.x does not implement the parameter.
+void reboot() {
+    if (usesLegacyParamNumbers()) {
+        logWarn "remote reboot is not supported on firmware ${device.getDataValue('firmwareVersion')}"
+        return
+    }
+
+    logWarn "rebooting device..."
+    sendCommands(secureCmd(zwave.configurationV4.configurationSet(parameterNumber: REBOOT_PARAM, size: 1, scaledConfigurationValue: 1)))
+}
+
 //endregion Capabilities Functions
 
 //region Device Specific Handlers
 
 void zwaveEvent(hubitat.zwave.commands.switchmultilevelv4.SwitchMultilevelReport cmd, ep = 0) {
     logTrace "${cmd}"
+
+    // Z-Wave JS optimistically echoes the value we just commanded back as the current value, within
+    // a few hundred milliseconds of a Set and before the shutter has moved. The echo is a partial
+    // document carrying only currentValue, so it parses with a null targetValue and duration. The
+    // device reports v4 and always sends both, so this shape is exclusively the echo; taking it at
+    // face value publishes a false position and a wrong direction. The real report follows shortly.
+    if (cmd.targetValue == null && cmd.duration == null) {
+        logDebug "Ignoring optimistic value echo from Z-Wave JS: ${cmd}"
+        return
+    }
 
     // We handle this way an unknown position reported as 254 which can happen if blinds are not calibrated.
     Short position = cmd.value
@@ -435,7 +559,15 @@ void zwaveEvent(hubitat.zwave.commands.switchmultilevelv4.SwitchMultilevelReport
     updateWindowShade(cmd.value, cmd.targetValue)
 }
 
+void zwaveEvent(hubitat.zwave.commands.meterv5.MeterReport cmd, ep = 0) {
+    handleMeterReport(cmd, ep)
+}
+
 void zwaveEvent(hubitat.zwave.commands.meterv6.MeterReport cmd, ep = 0) {
+    handleMeterReport(cmd, ep)
+}
+
+void handleMeterReport(cmd, ep = 0) {
     logTrace "${cmd}"
     switch (cmd.scale) {
         case 0x00:
@@ -665,7 +797,8 @@ void zwaveEvent(hubitat.zwave.commands.manufacturerspecificv2.ManufacturerSpecif
 void zwaveEvent(hubitat.zwave.commands.configurationv4.ConfigurationReport cmd) {
     logTrace "${cmd}"
 
-    Map param = getParam(cmd.parameterNumber)
+    Integer paramNum = toSpecParamNumber(cmd.parameterNumber as Integer)
+    Map param = getParam(paramNum)
     Long val = cmd.scaledConfigurationValue
 
     if (param) {
@@ -677,16 +810,18 @@ void zwaveEvent(hubitat.zwave.commands.configurationv4.ConfigurationReport cmd) 
             }
         }
 
-        logDebug "${param.input.title} (#${param.num}) = ${val.toString()}"
+        val = toSpecParamValue(paramNum, val)
+
+        logDebug "${param.input.title} (#${paramNum}) = ${val.toString()}"
         if (param.input.type == "enum") {
-            device.updateSetting("configParam${cmd.parameterNumber}", [value: "${val.toString()}", type: "enum"])
+            device.updateSetting("configParam${paramNum}", [value: "${val.toString()}", type: "enum"])
         } else {
-            device.updateSetting("configParam${cmd.parameterNumber}", val as Long)
+            device.updateSetting("configParam${paramNum}", val as Long)
         }
 
         handleParameterReport(param, val)
     } else {
-        logDebug "Parameter #${cmd.parameterNumber} = ${val.toString()}"
+        logDebug "Parameter #${cmd.parameterNumber} (unknown) = ${val.toString()}"
     }
 }
 
@@ -695,10 +830,12 @@ void zwaveEvent(hubitat.zwave.commands.configurationv4.ConfigurationReport cmd) 
 //region Z-Wave Command Helpers
 
 void sendCommands(List<String> cmds, Long delay = 200) {
+    cmds.each { logTrace "sendCommands: ${it}" }
     sendHubCommand(new hubitat.device.HubMultiAction(delayBetween(cmds, delay), hubitat.device.Protocol.ZWAVE))
 }
 
 void sendCommands(String cmd) {
+    logTrace "sendCommands: ${cmd}"
     sendHubCommand(new hubitat.device.HubAction(cmd, hubitat.device.Protocol.ZWAVE))
 }
 
@@ -752,6 +889,8 @@ String notificationGetCmd(notificationType, eventType, Integer ep = 0) {
 }
 
 String configSetCmd(Map param, Integer value) {
+    value = toDeviceParamValue(param.num, value)
+
     //Convert from unsigned to signed for scaledConfigurationValue.
     if (param.format >= 1 || param.format == null) {
         Long sizeFactor = Math.pow(256, param.size).round()
@@ -760,11 +899,11 @@ String configSetCmd(Map param, Integer value) {
         }
     }
 
-    return secureCmd(zwave.configurationV4.configurationSet(parameterNumber: param.num, size: param.size, scaledConfigurationValue: value))
+    return secureCmd(zwave.configurationV4.configurationSet(parameterNumber: toDeviceParamNumber(param.num), size: param.size, scaledConfigurationValue: value))
 }
 
 String configGetCmd(Map param) {
-    return secureCmd(zwave.configurationV4.configurationGet(parameterNumber: param.num))
+    return secureCmd(zwave.configurationV4.configurationGet(parameterNumber: toDeviceParamNumber(param.num)))
 }
 
 List configSetGetCmd(Map param, Integer value) {
@@ -806,7 +945,7 @@ String multiChannelCmd(hubitat.zwave.Command cmd, ep) {
 String superviseCmd(hubitat.zwave.Command cmd, ep = 0) {
     logTrace "superviseCmd: ${cmd} (ep ${ep})"
 
-    if (supportsSupervision()) {
+    if (useSupervision()) {
         //Encapsulated command with SupervisionGet.
         Short sID = getSessionId()
         def cmdEncap = zwave.supervisionV1.supervisionGet(sessionID: sID, statusUpdates: true).encapsulate(cmd)
@@ -901,6 +1040,30 @@ Boolean supportsSupervision() {
     return true
 }
 
+// Whether this driver should wrap outbound commands in SupervisionGet itself. Only on the legacy
+// stack: Z-Wave JS rewrites the encapsulation into its own supervised node.set_value, retries on
+// its own, and answers with a synthesised SUCCESS on acceptance rather than the device's WORKING,
+// so doing it here as well only adds a second retry path and dead session bookkeeping.
+Boolean useSupervision() {
+    return supportsSupervision() && !isZwaveJs()
+}
+
+// zwaveSecureEncap() only formats a command for whichever stack is active: a JSON document on
+// Z-Wave JS, a hex frame on legacy. Nothing is sent and a Get allocates no supervision session, so
+// this is a pure local check (1-2 ms measured) and needs no cached flag.
+Boolean isZwaveJs() {
+    try {
+        return zwaveSecureEncap(zwave.versionV3.versionGet().format())?.trim()?.startsWith("{")
+    } catch (e) {
+        logWarn "isZwaveJs() - could not determine the Z-Wave stack (${e}), assuming legacy"
+        return false
+    }
+}
+
+String describeStack() {
+    return isZwaveJs() ? "Z-Wave JS" : "legacy Z/IP"
+}
+
 void handleSupervisionResult(hubitat.zwave.Command cmd, ep = 0, result, position) {
     logDebug "Unhandled supervision result: $cmd (ep ${ep}) [${getObjectClassName(cmd)}]"
 }
@@ -919,9 +1082,64 @@ Map getParam(Number search) {
     return configParams.find { it.num == search }
 }
 
+//Tells whether the device runs a firmware generation predating the parameter renumbering done in 14.x.
+//Until the version report arrives the current numbering is assumed.
+Boolean usesLegacyParamNumbers() {
+    String firmwareVersion = device.getDataValue("firmwareVersion")
+    if (!firmwareVersion) {
+        return false
+    }
+
+    return safeToInt(firmwareVersion.tokenize(".")[0], 14) < 14
+}
+
+//Translates a parameter number from the specification to the number the device understands.
+Integer toDeviceParamNumber(Integer num) {
+    if (!usesLegacyParamNumbers()) {
+        return num
+    }
+
+    return legacyParamNumbers[num] ?: num
+}
+
+//Translates a parameter number reported by the device back to the number used in the specification.
+Integer toSpecParamNumber(Integer num) {
+    if (!usesLegacyParamNumbers()) {
+        return num
+    }
+
+    return legacyParamNumbers.find { it.value == num }?.key ?: num
+}
+
+//Translates a parameter value from the units of the specification to the units the device expects.
+Integer toDeviceParamValue(Integer num, Integer value) {
+    Map scale = usesLegacyParamNumbers() ? legacyValueScales[num] : null
+    if (!scale) {
+        return value
+    }
+
+    Integer deviceValue = value * scale.factor
+    if (deviceValue > scale.max) {
+        deviceValue = scale.max
+        logWarn "parameter #${num} set to ${value}, which is more than firmware ${device.getDataValue('firmwareVersion')} can express, capping at ${scale.max / scale.factor}"
+    }
+
+    return deviceValue
+}
+
+//Translates a parameter value reported by the device to the units used in the specification.
+Long toSpecParamValue(Integer num, Long value) {
+    Map scale = usesLegacyParamNumbers() ? legacyValueScales[num] : null
+    if (!scale) {
+        return value
+    }
+
+    return safeToInt(value / scale.factor) as Long
+}
+
 //Get param value.
 BigDecimal getParamValue(Map param) {
-    BigDecimal paramVal = safeToDec(settings."configParam${param.num}", param.defaultVal)
+    BigDecimal paramVal = safeToDec(settings."configParam${param.num}", param.input.defaultValue)
 
     return paramVal
 }
