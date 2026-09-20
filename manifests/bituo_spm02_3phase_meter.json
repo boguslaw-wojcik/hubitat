@@ -1,0 +1,18 @@
+{
+  "packageName": "BITUO TECHNIK SPM02 3-Phase Meter",
+  "author": "Boguslaw Wojcik (@bogus.wojcik)",
+  "minimumHEVersion": "2.5.1",
+  "dateReleased": "2026-09-20",
+  "documentationLink": "https://github.com/boguslaw-wojcik/hubitat/blob/main/drivers/bituo/bituo_spm02_3phase_meter.groovy",
+  "releaseNotes": "- v0.1.0 - 20.09.2026: Initial release: total and per-phase power, voltage and current, imported and exported energy, frequency and power factor, with reporting intervals and change thresholds configurable in the preferences and a device interview command.",
+  "version": "0.1.0",
+  "drivers": [
+    {
+      "id": "66c87071-a61d-4a84-9b04-fa5346b76417",
+      "name": "BITUO TECHNIK SPM02 3-Phase Meter",
+      "namespace": "boguslaw-wojcik",
+      "location": "https://raw.githubusercontent.com/boguslaw-wojcik/hubitat/main/drivers/bituo/bituo_spm02_3phase_meter.groovy",
+      "required": true
+    }
+  ]
+}

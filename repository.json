@@ -67,6 +67,18 @@
         "Energy Monitoring",
         "ZWave"
       ]
+    },
+    {
+      "id": "43718486-e31d-4e7e-b014-764352fc86cd",
+      "name": "BITUO TECHNIK SPM02 3-Phase Meter",
+      "category": "Utility",
+      "location": "https://raw.githubusercontent.com/boguslaw-wojcik/hubitat/main/manifests/bituo_spm02_3phase_meter.json",
+      "description": "BITUO TECHNIK SPM02X001 (Zemismart SPM02-3Z3) Zigbee 3-phase energy meter driver with total and per-phase power, voltage and current, energy, and configurable reporting.",
+      "descriptive": "",
+      "tags": [
+        "Energy Monitoring",
+        "Zigbee"
+      ]
     }
   ]
 }
