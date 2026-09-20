@@ -1,0 +1,18 @@
+{
+  "packageName": "Heatit ZM Dimmer 250W",
+  "author": "Boguslaw Wojcik (@bogus.wojcik)",
+  "minimumHEVersion": "2.5.1",
+  "dateReleased": "2026-09-20",
+  "documentationLink": "https://github.com/boguslaw-wojcik/hubitat/blob/main/drivers/heatit/heatit_zm_dimmer.groovy",
+  "releaseNotes": "- v0.1.0 - 20.09.2026: Initial release: switch and dimming control, power and energy metering, S1/S2 scene buttons, overload notification and all parameters, working on both the legacy Z-Wave stack and Z-Wave JS.",
+  "version": "0.1.0",
+  "drivers": [
+    {
+      "id": "2f9c5612-f583-4da2-a6f9-d8dcbb7a6520",
+      "name": "Heatit ZM Dimmer 250W",
+      "namespace": "boguslaw-wojcik",
+      "location": "https://raw.githubusercontent.com/boguslaw-wojcik/hubitat/main/drivers/heatit/heatit_zm_dimmer.groovy",
+      "required": true
+    }
+  ]
+}

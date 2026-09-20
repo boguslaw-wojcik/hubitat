@@ -4,7 +4,7 @@
  *  Author: Bogusław Wójcik
  *
  *  CHANGELOG:
- *  (no released version yet)
+ *  - v0.1.0 - 20.09.2026: Initial release: switch and dimming control, power and energy metering, S1/S2 scene buttons, overload notification and all parameters, working on both the legacy Z-Wave stack and Z-Wave JS.
  *
  *  DESCRIPTION:
  *  This is a custom driver for Heatit ZM Dimmer 250W (article no. 14 444 49), an in-wall dimmer with power metering and two

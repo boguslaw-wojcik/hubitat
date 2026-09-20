@@ -4,7 +4,7 @@
  *  Author: Bogusław Wójcik
  *
  *  CHANGELOG:
- *  (no released version yet)
+ *  - v0.1.0 - 20.09.2026: Initial release: switch control, power and energy metering with lowest and highest power tracking, remote reboot and all parameters of Wave 1PM and Wave 1PM Mini, working on both the legacy Z-Wave stack and Z-Wave JS.
  *
  *  DESCRIPTION:
  *  This is a custom driver for Shelly Wave 1PM (QNSW-001P16EU) and Shelly Wave 1PM Mini (QMSW-0A1P8EU), single-channel
