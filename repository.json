@@ -40,6 +40,33 @@
         "Temperature & Humidity",
         "ZWave"
       ]
+    },
+    {
+      "id": "3359eafe-0f0f-4d5e-a20f-270a74657d45",
+      "name": "Heatit ZM Dimmer 250W",
+      "category": "Control",
+      "location": "https://raw.githubusercontent.com/boguslaw-wojcik/hubitat/main/manifests/heatit_zm_dimmer.json",
+      "description": "Heatit ZM Dimmer 250W in-wall dimmer driver with power metering, S1/S2 scene buttons and all parameters, for both the legacy Z-Wave stack and Z-Wave JS.",
+      "descriptive": "",
+      "tags": [
+        "Lights & Switches",
+        "Energy Monitoring",
+        "Buttons",
+        "ZWave"
+      ]
+    },
+    {
+      "id": "51945705-cbb6-47fd-914b-99378967c913",
+      "name": "Shelly Wave 1PM & Mini",
+      "category": "Control",
+      "location": "https://raw.githubusercontent.com/boguslaw-wojcik/hubitat/main/manifests/shelly_wave_1pm.json",
+      "description": "Shelly Wave 1PM and Wave 1PM Mini relay driver with power metering, remote reboot and all parameters, for both the legacy Z-Wave stack and Z-Wave JS.",
+      "descriptive": "",
+      "tags": [
+        "Lights & Switches",
+        "Energy Monitoring",
+        "ZWave"
+      ]
     }
   ]
 }
