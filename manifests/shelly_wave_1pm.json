@@ -3,7 +3,8 @@
   "author": "Boguslaw Wojcik (@bogus.wojcik)",
   "minimumHEVersion": "2.5.1",
   "dateReleased": "2026-09-20",
-  "documentationLink": "https://github.com/boguslaw-wojcik/hubitat/blob/main/drivers/shelly/shelly_wave_1pm.groovy",
+  "documentationLink": "https://community.hubitat.com/t/release-shelly-wave-1pm-1pm-mini-community-driver/166339",
+  "communityLink": "https://community.hubitat.com/t/release-shelly-wave-1pm-1pm-mini-community-driver/166339",
   "releaseNotes": "- v0.1.0 - 20.09.2026: Initial release: switch control, power and energy metering with lowest and highest power tracking, remote reboot and all parameters of Wave 1PM and Wave 1PM Mini, working on both the legacy Z-Wave stack and Z-Wave JS.",
   "version": "0.1.0",
   "drivers": [

@@ -3,7 +3,8 @@
   "author": "Boguslaw Wojcik (@bogus.wojcik)",
   "minimumHEVersion": "2.5.1",
   "dateReleased": "2026-09-20",
-  "documentationLink": "https://github.com/boguslaw-wojcik/hubitat/blob/main/drivers/heatit/heatit_zm_dimmer.groovy",
+  "documentationLink": "https://community.hubitat.com/t/release-heatit-zm-dimmer-250w-community-driver/166341",
+  "communityLink": "https://community.hubitat.com/t/release-heatit-zm-dimmer-250w-community-driver/166341",
   "releaseNotes": "- v0.1.0 - 20.09.2026: Initial release: switch and dimming control, power and energy metering, S1/S2 scene buttons, overload notification and all parameters, working on both the legacy Z-Wave stack and Z-Wave JS.",
   "version": "0.1.0",
   "drivers": [
