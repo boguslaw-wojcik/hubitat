@@ -4,6 +4,7 @@
  * 	Author: Bogusław Wójcik
  *
  * 	CHANGELOG:
+ *  - v0.1.2 - 20.09.2026: Negative temperature and lux offsets (Param 28, 29) are kept as entered instead of turning into large positive numbers, motion untrigger time (Param 3) is written with the correct size, and refresh asks for temperature with a valid scale.
  * 	- v0.1.1 - 25.06.2025: Safeguard against logging level set when using Aeotec Support's driver.
  *  - v0.1.0 - 19.06.2025: Initial working version.
  *
@@ -34,7 +35,7 @@
 import groovy.transform.Field
 import groovy.time.TimeCategory
 
-@Field static final String VERSION = "0.1.1"
+@Field static final String VERSION = "0.1.2"
 
 metadata {
     definition(
@@ -114,7 +115,7 @@ metadata {
                         range       : "30..3600",
                 ],
                 num   : 3,
-                size  : 1,
+                size  : 2,
                 hidden: false,
         ],
         [
@@ -312,6 +313,7 @@ metadata {
                 ],
                 num   : 28,
                 size  : 2,
+                format: 0, // Signed integer, so negative offsets survive the report round trip.
                 hidden: false,
         ],
         [
@@ -326,6 +328,7 @@ metadata {
                 ],
                 num   : 29,
                 size  : 2,
+                format: 0, // Signed integer, so negative offsets survive the report round trip.
                 hidden: false,
         ],
 ]
@@ -534,7 +537,7 @@ void zwaveEvent(hubitat.zwave.commands.wakeupv2.WakeUpNotification cmd, ep = 0) 
 
         cmds += sensorBinaryGetCmd(12)
         cmds += batteryGetCmd()
-        cmds += sensorMultilevelGetCmd(1, getTemperatureScale())
+        cmds += sensorMultilevelGetCmd(1, getTemperatureScale() == "F" ? 1 : 0)
         cmds += sensorMultilevelGetCmd(3, 0)
 
         state.refreshOnNextWakeup = false
